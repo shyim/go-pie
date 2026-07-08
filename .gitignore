@@ -1,0 +1,5 @@
+/rpie
+/rpie-glibc
+/rpie-musl
+/rpie_go
+*.swp

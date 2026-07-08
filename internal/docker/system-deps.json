@@ -1,0 +1,1737 @@
+{
+  "_comment": "System build dependencies per extension and distro family, extracted from mlocati/docker-php-extension-installer (install-php-extensions). 'persistent' packages stay in the image; 'build_only' (*-dev, build tools) are removed after building when --cleanup-build-deps is used. A persistent entry matching a regex (contains ^ [ ] $ *) is a PATTERN resolved to a concrete package on the target distro at emit time. Regenerate with scripts/extract-ipe-catalog.py. Packagist lib-* requires take precedence over this table when present.",
+  "libraries": {
+    "_comment": "Maps a composer `lib-<name>` requirement (prefix stripped) to the distro -dev package that satisfies it. Hand-curated from PIE's SystemDependenciesDefinition plus common additions; preserved across catalog regenerations.",
+    "sodium": {
+      "debian": "libsodium-dev",
+      "alpine": "libsodium-dev"
+    },
+    "jpeg": {
+      "debian": "libjpeg-dev",
+      "alpine": "libjpeg-turbo-dev"
+    },
+    "zip": {
+      "debian": "libzip-dev",
+      "alpine": "libzip-dev"
+    },
+    "xslt": {
+      "debian": "libxslt1-dev",
+      "alpine": "libxslt-dev"
+    },
+    "xsl": {
+      "debian": "libxslt1-dev",
+      "alpine": "libxslt-dev"
+    },
+    "ffi": {
+      "debian": "libffi-dev",
+      "alpine": "libffi-dev"
+    },
+    "curl": {
+      "debian": "libcurl4-openssl-dev",
+      "alpine": "curl-dev"
+    },
+    "png": {
+      "debian": "libpng-dev",
+      "alpine": "libpng-dev"
+    },
+    "webp": {
+      "debian": "libwebp-dev",
+      "alpine": "libwebp-dev"
+    },
+    "freetype": {
+      "debian": "libfreetype6-dev",
+      "alpine": "freetype-dev"
+    },
+    "icu": {
+      "debian": "libicu-dev",
+      "alpine": "icu-dev"
+    },
+    "xml2": {
+      "debian": "libxml2-dev",
+      "alpine": "libxml2-dev"
+    },
+    "zlib": {
+      "debian": "zlib1g-dev",
+      "alpine": "zlib-dev"
+    },
+    "bz2": {
+      "debian": "libbz2-dev",
+      "alpine": "bzip2-dev"
+    },
+    "gmp": {
+      "debian": "libgmp-dev",
+      "alpine": "gmp-dev"
+    },
+    "ldap": {
+      "debian": "libldap2-dev",
+      "alpine": "openldap-dev"
+    },
+    "ssl": {
+      "debian": "libssl-dev",
+      "alpine": "openssl-dev"
+    },
+    "openssl": {
+      "debian": "libssl-dev",
+      "alpine": "openssl-dev"
+    },
+    "yaml": {
+      "debian": "libyaml-dev",
+      "alpine": "yaml-dev"
+    },
+    "event": {
+      "debian": "libevent-dev",
+      "alpine": "libevent-dev"
+    },
+    "memcached": {
+      "debian": "libmemcached-dev",
+      "alpine": "libmemcached-dev"
+    }
+  },
+  "extensions": {
+    "amqp": {
+      "alpine": {
+        "persistent": [
+          "rabbitmq-c"
+        ],
+        "build_only": [
+          "rabbitmq-c-dev"
+        ]
+      },
+      "debian": {
+        "persistent": [
+          "^librabbitmq[0-9]*$"
+        ],
+        "build_only": [
+          "librabbitmq-dev",
+          "libssh-dev"
+        ]
+      }
+    },
+    "bz2": {
+      "alpine": {
+        "persistent": [
+          "libbz2"
+        ],
+        "build_only": [
+          "bzip2-dev"
+        ]
+      },
+      "debian": {
+        "persistent": [],
+        "build_only": [
+          "libbz2-dev"
+        ]
+      }
+    },
+    "cassandra": {
+      "alpine": {
+        "persistent": [
+          "cassandra-cpp-driver",
+          "gmp"
+        ],
+        "build_only": [
+          "cassandra-cpp-driver-dev",
+          "gmp-dev"
+        ]
+      }
+    },
+    "cmark": {
+      "alpine": {
+        "persistent": [],
+        "build_only": [
+          "cmake"
+        ]
+      },
+      "debian": {
+        "persistent": [],
+        "build_only": [
+          "cmake"
+        ]
+      }
+    },
+    "dba": {
+      "alpine": {
+        "persistent": [
+          "db"
+        ],
+        "build_only": [
+          "db-dev"
+        ]
+      },
+      "debian": {
+        "persistent": [],
+        "build_only": [
+          "patch"
+        ]
+      }
+    },
+    "ddtrace": {
+      "alpine": {
+        "persistent": [
+          "libgcc"
+        ],
+        "build_only": [
+          "curl-dev",
+          "automake",
+          "libtool"
+        ]
+      },
+      "debian": {
+        "persistent": [],
+        "build_only": [
+          "libcurl4-openssl-dev",
+          "automake",
+          "libtool"
+        ]
+      }
+    },
+    "decimal": {
+      "debian": {
+        "persistent": [
+          "^libmpdec[0-9]*$"
+        ],
+        "build_only": [
+          "libmpdec-dev"
+        ]
+      }
+    },
+    "ecma_intl": {
+      "alpine": {
+        "persistent": [
+          "icu-libs"
+        ],
+        "build_only": [
+          "icu-dev",
+          "libidn-dev"
+        ]
+      },
+      "debian": {
+        "persistent": [
+          "^libicu[0-9]+$"
+        ],
+        "build_only": [
+          "libicu-dev"
+        ]
+      }
+    },
+    "enchant": {
+      "alpine": {
+        "persistent": [
+          "enchant2",
+          "glib",
+          "aspell-libs",
+          "libhunspell",
+          "enchant"
+        ],
+        "build_only": [
+          "enchant2-dev",
+          "glib-dev",
+          "aspell-dev",
+          "hunspell-dev",
+          "enchant-dev"
+        ]
+      },
+      "debian": {
+        "persistent": [
+          "libenchant-2-2",
+          "aspell-en",
+          "libhunspell-1.7-0",
+          "libenchant1c2a"
+        ],
+        "build_only": [
+          "libenchant-2-dev",
+          "libglib2.0-dev",
+          "libaspell-dev",
+          "libhunspell-dev",
+          "libenchant-dev"
+        ]
+      }
+    },
+    "event": {
+      "alpine": {
+        "persistent": [
+          "libevent"
+        ],
+        "build_only": [
+          "libevent-dev"
+        ]
+      },
+      "debian": {
+        "persistent": [
+          "^libevent[0-9\\.\\-]*$",
+          "^libevent-openssl[0-9\\.\\-]*$",
+          "^libevent-extra[0-9\\.\\-]*$",
+          "^libevent-pthreads[0-9\\.\\-]*$"
+        ],
+        "build_only": [
+          "libevent-dev"
+        ]
+      }
+    },
+    "ffi": {
+      "alpine": {
+        "persistent": [
+          "libffi"
+        ],
+        "build_only": [
+          "libffi-dev"
+        ]
+      },
+      "debian": {
+        "persistent": [],
+        "build_only": [
+          "libffi-dev"
+        ]
+      }
+    },
+    "gd": {
+      "alpine": {
+        "persistent": [
+          "freetype",
+          "libjpeg-turbo",
+          "libpng",
+          "libxpm",
+          "libvpx",
+          "libwebp",
+          "libavif",
+          "aom-libs",
+          "libdav1d",
+          "libstdc++"
+        ],
+        "build_only": [
+          "freetype-dev",
+          "libjpeg-turbo-dev",
+          "libpng-dev",
+          "libxpm-dev",
+          "libvpx-dev",
+          "libwebp-dev",
+          "libavif-dev",
+          "aom-dev",
+          "dav1d-dev",
+          "cmake",
+          "nasm",
+          "meson"
+        ]
+      },
+      "debian": {
+        "persistent": [
+          "libfreetype6",
+          "libjpeg62-turbo",
+          "^libpng[0-9]+-[0-9]+$",
+          "libxpm4",
+          "^libvpx[0-9]+$",
+          "^libwebp[0-9]+$",
+          "^libavif[0-9]+$",
+          "^libaom[0-9]+$",
+          "^libdav1d[0-9]+$"
+        ],
+        "build_only": [
+          "libfreetype6-dev",
+          "libjpeg62-turbo-dev",
+          "libpng-dev",
+          "libxpm-dev",
+          "libvpx-dev",
+          "libwebp-dev",
+          "libavif-dev",
+          "libaom-dev",
+          "libdav1d-dev",
+          "cmake",
+          "nasm",
+          "meson"
+        ]
+      }
+    },
+    "gearman": {
+      "alpine": {
+        "persistent": [
+          "libstdc++",
+          "libuuid"
+        ],
+        "build_only": [
+          "boost-dev",
+          "gperf",
+          "libmemcached-dev",
+          "libevent-dev",
+          "util-linux-dev"
+        ]
+      },
+      "debian": {
+        "persistent": [
+          "^libgearman[0-9]*$"
+        ],
+        "build_only": [
+          "libgearman-dev"
+        ]
+      }
+    },
+    "geoip": {
+      "alpine": {
+        "persistent": [
+          "geoip"
+        ],
+        "build_only": [
+          "geoip-dev"
+        ]
+      },
+      "debian": {
+        "persistent": [
+          "^libgeoip1[0-9]*$"
+        ],
+        "build_only": [
+          "libgeoip-dev"
+        ]
+      }
+    },
+    "geos": {
+      "alpine": {
+        "persistent": [
+          "geos-dev"
+        ],
+        "build_only": [
+          "geos"
+        ]
+      },
+      "debian": {
+        "persistent": [
+          "^libgeos-c1(v[0-9]*)?$"
+        ],
+        "build_only": [
+          "libgeos-dev"
+        ]
+      }
+    },
+    "gettext": {
+      "alpine": {
+        "persistent": [
+          "libintl"
+        ],
+        "build_only": [
+          "gettext-dev"
+        ]
+      }
+    },
+    "gmagick": {
+      "alpine": {
+        "persistent": [
+          "graphicsmagick",
+          "libgomp"
+        ],
+        "build_only": [
+          "graphicsmagick-dev",
+          "libtool"
+        ]
+      },
+      "debian": {
+        "persistent": [
+          "^libgraphicsmagick(-q16-)?[0-9]*$"
+        ],
+        "build_only": [
+          "libgraphicsmagick1-dev"
+        ]
+      }
+    },
+    "gmp": {
+      "alpine": {
+        "persistent": [
+          "gmp"
+        ],
+        "build_only": [
+          "gmp-dev"
+        ]
+      },
+      "debian": {
+        "persistent": [],
+        "build_only": [
+          "libgmp-dev"
+        ]
+      }
+    },
+    "gnupg": {
+      "alpine": {
+        "persistent": [
+          "gpgme"
+        ],
+        "build_only": [
+          "gpgme-dev"
+        ]
+      },
+      "debian": {
+        "persistent": [
+          "^libgpgme[0-9]*$"
+        ],
+        "build_only": []
+      }
+    },
+    "grpc": {
+      "alpine": {
+        "persistent": [
+          "libstdc++"
+        ],
+        "build_only": [
+          "zlib-dev",
+          "linux-headers"
+        ]
+      },
+      "debian": {
+        "persistent": [],
+        "build_only": [
+          "zlib1g-dev"
+        ]
+      }
+    },
+    "http": {
+      "alpine": {
+        "persistent": [
+          "libevent",
+          "libidn",
+          "icu-libs"
+        ],
+        "build_only": [
+          "zlib-dev",
+          "curl-dev",
+          "libevent-dev",
+          "libidn-dev",
+          "icu-dev"
+        ]
+      },
+      "debian": {
+        "persistent": [
+          "^libevent[0-9\\.\\-]*$",
+          "^libicu[0-9]+$",
+          "^libidn2-[0-9+]$"
+        ],
+        "build_only": [
+          "zlib1g-dev",
+          "libcurl4-openssl-dev",
+          "libevent-dev",
+          "libicu-dev"
+        ]
+      }
+    },
+    "imagick": {
+      "alpine": {
+        "persistent": [
+          "imagemagick",
+          "libgomp",
+          "ghostscript",
+          "libheif",
+          "libjxl",
+          "libraw",
+          "librsvg",
+          "libheif-aom",
+          "libheif-x265"
+        ],
+        "build_only": [
+          "imagemagick-dev"
+        ]
+      },
+      "debian": {
+        "persistent": [
+          "^libmagickwand-7.q16-[0-9]+$",
+          "^libmagickcore-7.q16-[0-9]+-extra$",
+          "libheif-plugin-aomenc",
+          "^libmagickwand-6.q16-[0-9]+$",
+          "^libmagickcore-6.q16-[0-9]+-extra$",
+          "ghostscript"
+        ],
+        "build_only": [
+          "libmagickwand-dev"
+        ]
+      }
+    },
+    "imap": {
+      "alpine": {
+        "persistent": [
+          "c-client"
+        ],
+        "build_only": [
+          "krb5-dev",
+          "imap-dev"
+        ]
+      },
+      "debian": {
+        "persistent": [
+          "sgml-base",
+          "libc-client2007e"
+        ],
+        "build_only": [
+          "libkrb5-dev",
+          "libpam0g-dev",
+          "comerr-dev",
+          "krb5-multidev",
+          "libc-client2007e",
+          "libgssrpc4",
+          "libkadm5clnt-mit11",
+          "libkadm5srv-mit11",
+          "libkdb5-8",
+          "libssl-doc",
+          "mlock",
+          "libc-client-dev"
+        ]
+      }
+    },
+    "interbase": {
+      "alpine": {
+        "persistent": [],
+        "build_only": [
+          "icu-dev",
+          "ncurses-dev"
+        ]
+      },
+      "debian": {
+        "persistent": [
+          "libfbclient2"
+        ],
+        "build_only": [
+          "firebird-dev",
+          "libib-util"
+        ]
+      }
+    },
+    "intl": {
+      "alpine": {
+        "persistent": [
+          "icu-libs"
+        ],
+        "build_only": [
+          "icu-dev",
+          "patch"
+        ]
+      },
+      "debian": {
+        "persistent": [
+          "^libicu[0-9]+$"
+        ],
+        "build_only": [
+          "libicu-dev"
+        ]
+      }
+    },
+    "ion": {
+      "alpine": {
+        "persistent": [],
+        "build_only": [
+          "cmake",
+          "git"
+        ]
+      },
+      "debian": {
+        "persistent": [],
+        "build_only": [
+          "cmake",
+          "git"
+        ]
+      }
+    },
+    "ip2location": {
+      "alpine": {
+        "persistent": [],
+        "build_only": [
+          "automake",
+          "libtool"
+        ]
+      },
+      "debian": {
+        "persistent": [],
+        "build_only": [
+          "automake",
+          "libtool"
+        ]
+      }
+    },
+    "judy": {
+      "alpine": {
+        "persistent": [
+          "judy"
+        ],
+        "build_only": [
+          "judy-dev"
+        ]
+      },
+      "debian": {
+        "persistent": [
+          "libjudydebian1"
+        ],
+        "build_only": [
+          "libjudy-dev"
+        ]
+      }
+    },
+    "ldap": {
+      "alpine": {
+        "persistent": [
+          "libldap"
+        ],
+        "build_only": [
+          "openldap-dev"
+        ]
+      },
+      "debian": {
+        "persistent": [
+          "libldap-common"
+        ],
+        "build_only": [
+          "libldap2-dev"
+        ]
+      }
+    },
+    "luasandbox": {
+      "alpine": {
+        "persistent": [
+          "lua5.1-libs"
+        ],
+        "build_only": [
+          "lua5.1-dev"
+        ]
+      },
+      "debian": {
+        "persistent": [
+          "liblua5.1-0"
+        ],
+        "build_only": [
+          "liblua5.1-0-dev"
+        ]
+      }
+    },
+    "lz4": {
+      "alpine": {
+        "persistent": [
+          "lz4-libs"
+        ],
+        "build_only": [
+          "lz4-dev"
+        ]
+      },
+      "debian": {
+        "persistent": [
+          "liblz4-1"
+        ],
+        "build_only": [
+          "liblz4-dev"
+        ]
+      }
+    },
+    "maxminddb": {
+      "alpine": {
+        "persistent": [
+          "libmaxminddb"
+        ],
+        "build_only": [
+          "libmaxminddb-dev"
+        ]
+      },
+      "debian": {
+        "persistent": [
+          "^libmaxminddb[0-9]*$"
+        ],
+        "build_only": [
+          "libmaxminddb-dev"
+        ]
+      }
+    },
+    "mcrypt": {
+      "alpine": {
+        "persistent": [
+          "libmcrypt"
+        ],
+        "build_only": [
+          "libmcrypt-dev"
+        ]
+      },
+      "debian": {
+        "persistent": [
+          "libmcrypt4"
+        ],
+        "build_only": [
+          "libmcrypt-dev"
+        ]
+      }
+    },
+    "memcache": {
+      "alpine": {
+        "persistent": [],
+        "build_only": [
+          "zlib-dev"
+        ]
+      },
+      "debian": {
+        "persistent": [],
+        "build_only": [
+          "zlib1g-dev"
+        ]
+      }
+    },
+    "memcached": {
+      "alpine": {
+        "persistent": [
+          "libmemcached-libs"
+        ],
+        "build_only": [
+          "libmemcached-dev",
+          "zlib-dev"
+        ]
+      },
+      "debian": {
+        "persistent": [
+          "libmemcachedutil2t64",
+          "libmemcachedutil2"
+        ],
+        "build_only": [
+          "libmemcached-dev",
+          "zlib1g-dev"
+        ]
+      }
+    },
+    "memprof": {
+      "alpine": {
+        "persistent": [
+          "judy"
+        ],
+        "build_only": [
+          "judy-dev",
+          "bsd-compat-headers"
+        ]
+      },
+      "debian": {
+        "persistent": [
+          "libjudydebian1"
+        ],
+        "build_only": [
+          "libjudy-dev"
+        ]
+      }
+    },
+    "mongo": {
+      "alpine": {
+        "persistent": [
+          "libsasl"
+        ],
+        "build_only": [
+          "cyrus-sasl-dev"
+        ]
+      },
+      "debian": {
+        "persistent": [],
+        "build_only": [
+          "libsasl2-dev"
+        ]
+      }
+    },
+    "mongodb": {
+      "alpine": {
+        "persistent": [
+          "icu-libs",
+          "libsasl",
+          "snappy",
+          "zstd-libs"
+        ],
+        "build_only": [
+          "icu-dev",
+          "cyrus-sasl-dev",
+          "snappy-dev",
+          "zlib-dev",
+          "zstd-dev"
+        ]
+      },
+      "debian": {
+        "persistent": [
+          "^libsnappy[0-9]+(v[0-9]+)?$",
+          "^libicu[0-9]+$",
+          "^libzstd[0-9]*$"
+        ],
+        "build_only": [
+          "libicu-dev",
+          "libsasl2-dev",
+          "libsnappy-dev",
+          "zlib1g-dev",
+          "libzstd-dev"
+        ]
+      }
+    },
+    "mosquitto": {
+      "alpine": {
+        "persistent": [
+          "mosquitto-libs"
+        ],
+        "build_only": [
+          "mosquitto-dev"
+        ]
+      },
+      "debian": {
+        "persistent": [
+          "libmosquitto1"
+        ],
+        "build_only": [
+          "libmosquitto-dev"
+        ]
+      }
+    },
+    "mssql": {
+      "alpine": {
+        "persistent": [
+          "freetds"
+        ],
+        "build_only": [
+          "freetds-dev"
+        ]
+      },
+      "debian": {
+        "persistent": [
+          "libsybdb5"
+        ],
+        "build_only": [
+          "freetds-dev"
+        ]
+      }
+    },
+    "nsq": {
+      "alpine": {
+        "persistent": [
+          "libevent"
+        ],
+        "build_only": [
+          "libevent-dev"
+        ]
+      },
+      "debian": {
+        "persistent": [
+          "^libevent[0-9\\.\\-]*$"
+        ],
+        "build_only": [
+          "libevent-dev"
+        ]
+      }
+    },
+    "openswoole": {
+      "alpine": {
+        "persistent": [
+          "postgresql-libs",
+          "libstdc++"
+        ],
+        "build_only": [
+          "curl-dev",
+          "postgresql-dev",
+          "linux-headers"
+        ]
+      },
+      "debian": {
+        "persistent": [
+          "libpq5"
+        ],
+        "build_only": [
+          "libcurl4-openssl-dev",
+          "libpq-dev"
+        ]
+      }
+    },
+    "parle": {
+      "alpine": {
+        "persistent": [
+          "libstdc++"
+        ],
+        "build_only": []
+      }
+    },
+    "pdo_dblib": {
+      "alpine": {
+        "persistent": [
+          "freetds"
+        ],
+        "build_only": [
+          "freetds-dev"
+        ]
+      },
+      "debian": {
+        "persistent": [
+          "libsybdb5"
+        ],
+        "build_only": [
+          "freetds-dev"
+        ]
+      }
+    },
+    "pdo_firebird": {
+      "alpine": {
+        "persistent": [
+          "libstdc++"
+        ],
+        "build_only": [
+          "icu-dev",
+          "ncurses-dev",
+          "zlib-dev",
+          "cmake"
+        ]
+      },
+      "debian": {
+        "persistent": [
+          "libfbclient2"
+        ],
+        "build_only": [
+          "firebird-dev",
+          "libib-util"
+        ]
+      }
+    },
+    "pdo_snowflake": {
+      "debian": {
+        "persistent": [
+          "libstdc++6",
+          "libcurl4"
+        ],
+        "build_only": [
+          "cmake",
+          "g++",
+          "libcurl4-openssl-dev"
+        ]
+      }
+    },
+    "php_trie": {
+      "alpine": {
+        "persistent": [
+          "libstdc++"
+        ],
+        "build_only": []
+      }
+    },
+    "phpy": {
+      "alpine": {
+        "persistent": [
+          "python3"
+        ],
+        "build_only": [
+          "python3-dev"
+        ]
+      },
+      "debian": {
+        "persistent": [
+          "libpython3.13",
+          "libpython3.11",
+          "libpython3.9",
+          "libpython3.7"
+        ],
+        "build_only": [
+          "python3-dev"
+        ]
+      }
+    },
+    "pkcs11": {
+      "alpine": {
+        "persistent": [
+          "softhsm"
+        ],
+        "build_only": []
+      },
+      "debian": {
+        "persistent": [
+          "libsofthsm2"
+        ],
+        "build_only": []
+      }
+    },
+    "pspell": {
+      "alpine": {
+        "persistent": [
+          "aspell-libs"
+        ],
+        "build_only": [
+          "aspell-dev"
+        ]
+      },
+      "debian": {
+        "persistent": [
+          "libaspell15"
+        ],
+        "build_only": [
+          "libpspell-dev"
+        ]
+      }
+    },
+    "rdkafka": {
+      "alpine": {
+        "persistent": [
+          "librdkafka"
+        ],
+        "build_only": [
+          "librdkafka-dev"
+        ]
+      },
+      "debian": {
+        "persistent": [
+          "^librdkafka\\+*[0-9]*$"
+        ],
+        "build_only": [
+          "librdkafka-dev"
+        ]
+      }
+    },
+    "recode": {
+      "alpine": {
+        "persistent": [
+          "recode"
+        ],
+        "build_only": [
+          "recode-dev"
+        ]
+      },
+      "debian": {
+        "persistent": [
+          "librecode0"
+        ],
+        "build_only": [
+          "librecode-dev"
+        ]
+      }
+    },
+    "redis": {
+      "alpine": {
+        "persistent": [
+          "zstd",
+          "zstd-libs",
+          "lz4-libs"
+        ],
+        "build_only": [
+          "zstd-dev",
+          "lz4-dev"
+        ]
+      },
+      "debian": {
+        "persistent": [
+          "^libzstd[0-9]*$",
+          "liblz4-1"
+        ],
+        "build_only": [
+          "libzstd-dev",
+          "liblz4-dev"
+        ]
+      }
+    },
+    "relay": {
+      "alpine": {
+        "persistent": [
+          "lz4-libs",
+          "zstd-libs"
+        ],
+        "build_only": []
+      }
+    },
+    "rrd": {
+      "alpine": {
+        "persistent": [
+          "librrd"
+        ],
+        "build_only": [
+          "rrdtool-dev"
+        ]
+      },
+      "debian": {
+        "persistent": [
+          "^librrd[0-9]*$"
+        ],
+        "build_only": [
+          "librrd-dev"
+        ]
+      }
+    },
+    "saxon": {
+      "alpine": {
+        "persistent": [
+          "libstdc++"
+        ],
+        "build_only": []
+      },
+      "debian": {
+        "persistent": [],
+        "build_only": [
+          "unzip"
+        ]
+      }
+    },
+    "seasclick": {
+      "alpine": {
+        "persistent": [
+          "libstdc++"
+        ],
+        "build_only": []
+      }
+    },
+    "simdjson": {
+      "alpine": {
+        "persistent": [
+          "libstdc++"
+        ],
+        "build_only": []
+      }
+    },
+    "smbclient": {
+      "alpine": {
+        "persistent": [
+          "libsmbclient"
+        ],
+        "build_only": [
+          "samba-dev"
+        ]
+      },
+      "debian": {
+        "persistent": [
+          "libsmbclient"
+        ],
+        "build_only": [
+          "libsmbclient-dev"
+        ]
+      }
+    },
+    "snappy": {
+      "alpine": {
+        "persistent": [
+          "snappy"
+        ],
+        "build_only": [
+          "snappy-dev"
+        ]
+      },
+      "debian": {
+        "persistent": [
+          "^libsnappy1(v[0-9]+)?$"
+        ],
+        "build_only": [
+          "libsnappy-dev"
+        ]
+      }
+    },
+    "snmp": {
+      "alpine": {
+        "persistent": [
+          "net-snmp-libs"
+        ],
+        "build_only": [
+          "net-snmp-dev"
+        ]
+      },
+      "debian": {
+        "persistent": [
+          "snmp"
+        ],
+        "build_only": [
+          "libsnmp-dev"
+        ]
+      }
+    },
+    "snuffleupagus": {
+      "alpine": {
+        "persistent": [
+          "pcre"
+        ],
+        "build_only": []
+      }
+    },
+    "soap": {
+      "alpine": {
+        "persistent": [],
+        "build_only": [
+          "libxml2-dev"
+        ]
+      },
+      "debian": {
+        "persistent": [],
+        "build_only": [
+          "libxml2-dev"
+        ]
+      }
+    },
+    "sockets": {
+      "alpine": {
+        "persistent": [],
+        "build_only": [
+          "linux-headers"
+        ]
+      }
+    },
+    "solr": {
+      "alpine": {
+        "persistent": [],
+        "build_only": [
+          "curl-dev",
+          "libxml2-dev"
+        ]
+      },
+      "debian": {
+        "persistent": [],
+        "build_only": [
+          "libcurl4-openssl-dev",
+          "libxml2-dev"
+        ]
+      }
+    },
+    "sourceguardian": {
+      "alpine": {
+        "persistent": [
+          "eudev-libs"
+        ],
+        "build_only": []
+      }
+    },
+    "spx": {
+      "alpine": {
+        "persistent": [],
+        "build_only": [
+          "zlib-dev"
+        ]
+      },
+      "debian": {
+        "persistent": [],
+        "build_only": [
+          "zlib1g-dev"
+        ]
+      }
+    },
+    "ssh2": {
+      "alpine": {
+        "persistent": [
+          "libssh2"
+        ],
+        "build_only": [
+          "libssh2-dev"
+        ]
+      },
+      "debian": {
+        "persistent": [],
+        "build_only": [
+          "libssh2-1-dev"
+        ]
+      }
+    },
+    "statgrab": {
+      "alpine": {
+        "persistent": [
+          "libstatgrab"
+        ],
+        "build_only": [
+          "libstatgrab-dev"
+        ]
+      },
+      "debian": {
+        "persistent": [
+          "^libstatgrab[0-9]*$"
+        ],
+        "build_only": [
+          "libstatgrab-dev"
+        ]
+      }
+    },
+    "swoole": {
+      "alpine": {
+        "persistent": [
+          "postgresql-libs",
+          "libstdc++",
+          "c-ares",
+          "zstd-libs",
+          "libssh2",
+          "liburing"
+        ],
+        "build_only": [
+          "curl-dev",
+          "postgresql-dev",
+          "linux-headers",
+          "c-ares-dev",
+          "sqlite-dev",
+          "zstd-dev",
+          "ncurses-dev",
+          "libssh2-dev",
+          "cmake",
+          "liburing-dev"
+        ]
+      },
+      "debian": {
+        "persistent": [
+          "libpq5",
+          "libc-ares2",
+          "libbrotli1",
+          "^libzstd[0-9]*$",
+          "libfbclient2",
+          "^libssh2(-[0-9]+)$",
+          "liburing2"
+        ],
+        "build_only": [
+          "libcurl4-openssl-dev",
+          "libpq-dev",
+          "libc-ares-dev",
+          "zlib1g-dev",
+          "libbrotli-dev",
+          "libsqlite3-dev",
+          "libzstd-dev",
+          "firebird-dev",
+          "liburing-dev"
+        ]
+      }
+    },
+    "sybase_ct": {
+      "alpine": {
+        "persistent": [
+          "freetds"
+        ],
+        "build_only": [
+          "freetds-dev"
+        ]
+      },
+      "debian": {
+        "persistent": [
+          "libct4"
+        ],
+        "build_only": [
+          "freetds-dev"
+        ]
+      }
+    },
+    "tdlib": {
+      "alpine": {
+        "persistent": [
+          "libstdc++"
+        ],
+        "build_only": [
+          "git",
+          "cmake",
+          "gperf",
+          "zlib-dev",
+          "linux-headers",
+          "readline-dev"
+        ]
+      },
+      "debian": {
+        "persistent": [],
+        "build_only": [
+          "git",
+          "cmake",
+          "gperf",
+          "zlib1g-dev"
+        ]
+      }
+    },
+    "tensor": {
+      "alpine": {
+        "persistent": [
+          "openblas",
+          "lapack",
+          "libexecinfo",
+          "liblapack"
+        ],
+        "build_only": [
+          "lapack-dev",
+          "openblas-dev",
+          "libexecinfo-dev"
+        ]
+      },
+      "debian": {
+        "persistent": [
+          "liblapacke",
+          "gfortran-6",
+          "libopenblas-base",
+          "gfortran-8",
+          "gfortran-10",
+          "gfortran-12",
+          "libopenblas0",
+          "libgfortran5"
+        ],
+        "build_only": [
+          "liblapack-dev",
+          "libopenblas-dev",
+          "liblapacke-dev",
+          "libgfortran-6-dev",
+          "libgfortran-8-dev",
+          "libgfortran-10-dev",
+          "libgfortran-12-dev",
+          "libgfortran-14-dev"
+        ]
+      }
+    },
+    "tidy": {
+      "alpine": {
+        "persistent": [
+          "tidyhtml",
+          "tidyhtml-libs"
+        ],
+        "build_only": [
+          "tidyhtml-dev"
+        ]
+      },
+      "debian": {
+        "persistent": [
+          "^libtidy-?[0-9][0-9.\\-]*(deb[0-9])?$"
+        ],
+        "build_only": [
+          "libtidy-dev"
+        ]
+      }
+    },
+    "uuid": {
+      "alpine": {
+        "persistent": [
+          "libuuid"
+        ],
+        "build_only": [
+          "util-linux-dev"
+        ]
+      },
+      "debian": {
+        "persistent": [],
+        "build_only": [
+          "uuid-dev"
+        ]
+      }
+    },
+    "uv": {
+      "alpine": {
+        "persistent": [
+          "libuv"
+        ],
+        "build_only": [
+          "libuv-dev"
+        ]
+      },
+      "debian": {
+        "persistent": [
+          "libuv1"
+        ],
+        "build_only": [
+          "libuv1-dev"
+        ]
+      }
+    },
+    "v8js": {
+      "alpine": {
+        "persistent": [
+          "libstdc++",
+          "nodejs-libs"
+        ],
+        "build_only": [
+          "nodejs-dev"
+        ]
+      },
+      "debian": {
+        "persistent": [
+          "^libnode[0-9]+$"
+        ],
+        "build_only": [
+          "libnode-dev"
+        ]
+      }
+    },
+    "vips": {
+      "alpine": {
+        "persistent": [
+          "vips"
+        ],
+        "build_only": [
+          "vips-dev"
+        ]
+      },
+      "debian": {
+        "persistent": [
+          "libvips"
+        ],
+        "build_only": [
+          "libvips-dev"
+        ]
+      }
+    },
+    "wddx": {
+      "alpine": {
+        "persistent": [],
+        "build_only": [
+          "libxml2-dev"
+        ]
+      },
+      "debian": {
+        "persistent": [],
+        "build_only": [
+          "libxml2-dev"
+        ]
+      }
+    },
+    "wikidiff2": {
+      "alpine": {
+        "persistent": [
+          "libstdc++"
+        ],
+        "build_only": [
+          "git"
+        ]
+      },
+      "debian": {
+        "persistent": [
+          "libthai0"
+        ],
+        "build_only": [
+          "git",
+          "libthai-dev"
+        ]
+      }
+    },
+    "xdebug": {
+      "alpine": {
+        "persistent": [],
+        "build_only": [
+          "linux-headers"
+        ]
+      }
+    },
+    "xlswriter": {
+      "alpine": {
+        "persistent": [],
+        "build_only": [
+          "zlib-dev"
+        ]
+      },
+      "debian": {
+        "persistent": [],
+        "build_only": [
+          "zlib1g-dev"
+        ]
+      }
+    },
+    "xmldiff": {
+      "alpine": {
+        "persistent": [
+          "libstdc++"
+        ],
+        "build_only": [
+          "libxml2-dev"
+        ]
+      },
+      "debian": {
+        "persistent": [],
+        "build_only": [
+          "libxml2-dev"
+        ]
+      }
+    },
+    "xmlrpc": {
+      "alpine": {
+        "persistent": [],
+        "build_only": [
+          "libxml2-dev"
+        ]
+      },
+      "debian": {
+        "persistent": [],
+        "build_only": [
+          "libxml2-dev"
+        ]
+      }
+    },
+    "xpass": {
+      "alpine": {
+        "persistent": [],
+        "build_only": [
+          "linux-headers"
+        ]
+      }
+    },
+    "xsl": {
+      "alpine": {
+        "persistent": [
+          "libxslt"
+        ],
+        "build_only": [
+          "libxslt-dev",
+          "libgcrypt-dev"
+        ]
+      },
+      "debian": {
+        "persistent": [
+          "^libxslt1\\.1$"
+        ],
+        "build_only": [
+          "libxslt-dev"
+        ]
+      }
+    },
+    "yaml": {
+      "alpine": {
+        "persistent": [
+          "yaml"
+        ],
+        "build_only": [
+          "yaml-dev"
+        ]
+      },
+      "debian": {
+        "persistent": [
+          "libyaml-0-2"
+        ],
+        "build_only": [
+          "libyaml-dev"
+        ]
+      }
+    },
+    "yar": {
+      "alpine": {
+        "persistent": [],
+        "build_only": [
+          "curl-dev"
+        ]
+      },
+      "debian": {
+        "persistent": [],
+        "build_only": [
+          "libcurl4-openssl-dev"
+        ]
+      }
+    },
+    "zip": {
+      "alpine": {
+        "persistent": [
+          "libzip"
+        ],
+        "build_only": [
+          "cmake",
+          "libzip-dev",
+          "zlib-dev"
+        ]
+      },
+      "debian": {
+        "persistent": [
+          "^libzip[0-9]$"
+        ],
+        "build_only": [
+          "cmake",
+          "libzip-dev",
+          "libbz2-dev",
+          "zlib1g-dev"
+        ]
+      }
+    },
+    "zmq": {
+      "alpine": {
+        "persistent": [
+          "zeromq-dev"
+        ],
+        "build_only": []
+      },
+      "debian": {
+        "persistent": [
+          "libzmq3-dev"
+        ],
+        "build_only": []
+      }
+    },
+    "zookeeper": {
+      "alpine": {
+        "persistent": [],
+        "build_only": [
+          "maven",
+          "automake",
+          "libtool",
+          "openjdk8"
+        ]
+      },
+      "debian": {
+        "persistent": [
+          "libzookeeper-mt2"
+        ],
+        "build_only": [
+          "libzookeeper-mt-dev"
+        ]
+      }
+    }
+  }
+}
