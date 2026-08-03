@@ -172,6 +172,46 @@ func TestUnknownExtensionIsNone(t *testing.T) {
 	}
 }
 
+// Extensions that upstream declares in a SHARED case arm (`pgsql@debian |
+// pdo_pgsql@debian | pq@debian)`) were silently dropped by the catalog
+// extractor, so `--install-system-deps` never installed their dev packages and
+// the build failed with "Cannot find libpq-fe.h".
+func TestSharedCaseArmExtensionsArePresent(t *testing.T) {
+	for _, ext := range []string{"pgsql", "pdo_pgsql", "odbc", "pdo_odbc", "sodium", "oci8"} {
+		for _, family := range []DistroFamily{FamilyDebian, FamilyAlpine} {
+			if lookup(ext, family) == nil {
+				t.Errorf("%s has no catalog entry for family %v", ext, family)
+			}
+		}
+	}
+	if deps := lookup("pgsql", FamilyDebian); deps != nil && !anyContains(deps.BuildOnly, "libpq") {
+		t.Errorf("pgsql/debian build deps lack libpq: %v", deps.BuildOnly)
+	}
+}
+
+// Where upstream picks a different package per distro release, the flat catalog
+// must carry an anchored alternation rather than both literal names: apt and apk
+// install atomically, so one name that does not exist on this release would fail
+// the whole batch and take every other dependency with it.
+func TestReleaseConditionalRuntimePackagesAreAPattern(t *testing.T) {
+	deps := lookup("odbc", FamilyDebian)
+	if deps == nil {
+		t.Fatal("expected odbc debian deps")
+	}
+	var found bool
+	for _, p := range deps.Persistent {
+		if strings.Contains(p, "libodbc2") && strings.Contains(p, "libodbc1") {
+			if !IsPattern(p) {
+				t.Errorf("odbc runtime alternatives are not a pattern: %q", p)
+			}
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected a libodbc2/libodbc1 alternation in %v", deps.Persistent)
+	}
+}
+
 func TestExpandedCatalogHasManyExtensions(t *testing.T) {
 	if len(catalog().Extensions) < 80 {
 		t.Fatalf("catalog too small: %d", len(catalog().Extensions))
@@ -378,6 +418,14 @@ func TestPatternMatchesAnchoredCatalogEntries(t *testing.T) {
 	}
 }
 
+// Extensions where upstream intentionally keeps the -dev package installed,
+// because on that distro it is what ships the runtime shared library. Narrow and
+// explicit so a genuine mistake in any other entry still fails the test.
+var devPackageIsRuntimeUpstream = map[string]bool{
+	"zmq":  true,
+	"geos": true,
+}
+
 // The catalog is generated data that ships embedded in the binary, so a
 // malformed entry cannot be caught at runtime without breaking an install.
 func TestEmbeddedCatalogIsWellFormed(t *testing.T) {
@@ -393,8 +441,13 @@ func TestEmbeddedCatalogIsWellFormed(t *testing.T) {
 					}
 					continue
 				}
-				// A -dev package left in persistent survives --cleanup-build-deps.
-				if strings.HasSuffix(entry, "-dev") {
+				// A -dev package left in persistent survives
+				// --cleanup-build-deps, which is normally a packaging mistake.
+				// A few upstream arms do it deliberately (zmq keeps
+				// zeromq-dev/libzmq3-dev, geos keeps geos-dev) because that is
+				// the package actually carrying the shared library there, and
+				// the catalog mirrors upstream rather than second-guessing it.
+				if strings.HasSuffix(entry, "-dev") && !devPackageIsRuntimeUpstream[ext] {
 					t.Errorf("%s/%s: %q is a development package but is marked persistent", ext, fam, entry)
 				}
 			}

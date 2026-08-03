@@ -87,8 +87,20 @@ func MergeSystemDeps(all []SystemDeps) SystemDeps {
 // invocation (persistent and build-only together).
 func InstallSystemDeps(ctx context.Context, deps *SystemDeps, distro *Distro) error {
 	pm := PackageManagerForDistro(distro)
+	// Refresh the package index before anything queries it. Official images ship
+	// with /var/lib/apt/lists emptied, so `apt-cache policy` and `apt-cache
+	// search` return nothing at all until this runs -- which would make every
+	// availability probe below report "not available" and strip real packages.
+	if err := pm.RefreshIndex(ctx); err != nil {
+		return err
+	}
 	all := pm.ResolveRuntimePackages(ctx, deps.Persistent)
-	all = append(all, deps.BuildOnly...)
+	// Build-only packages are filtered the same way runtime ones are, rather
+	// than appended raw: the catalog is flat but upstream picks some *-dev
+	// packages per distro release (libenchant-2-dev vs libenchant-dev), so a
+	// single name that does not exist here would fail the whole atomic
+	// apt/apk transaction and take every other dependency down with it.
+	all = append(all, pm.AvailableBuildPackages(ctx, deps.BuildOnly)...)
 	return pm.Install(ctx, all)
 }
 

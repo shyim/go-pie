@@ -255,6 +255,13 @@ def packagist_versions(package, keep):
             continue
         if rel.get("type") in ("php-ext", "php-ext-zend"):
             ext_type = rel.get("type")
+        # Older releases predate the php-ext spec and carry no `php-ext` block,
+        # so gpie cannot learn the extension name and falls back to deriving it
+        # from the package name -- phpredis/phpredis 6.2.0 builds redis.so but is
+        # looked for as phpredis.so, and the build fails after compiling. Only
+        # build versions that actually declare their metadata.
+        if not isinstance(rel.get("php-ext"), dict):
+            continue
         normalized = version.lstrip("v")
         # p2 lists newest first; keep the first (richest) entry per version.
         seen.setdefault(normalized, php_require(rel))

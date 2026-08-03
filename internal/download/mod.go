@@ -420,14 +420,25 @@ func locateSourceDir(root string, pkg *resolver.ResolvedPackage) (string, error)
 		if !pathStartsWith(canonical, topCanonical) {
 			return "", fmt.Errorf("build-path `%s` escapes the extracted source tree", resolved)
 		}
+		// The build path is where phpize runs, so a file here would fail later
+		// with an opaque "not a directory" from the exec call.
+		if !isDir(canonical) {
+			return "", fmt.Errorf("build-path `%s` is not a directory", resolved)
+		}
 		return canonical, nil
 	}
 
 	if fileExists(filepath.Join(top, "config.m4")) {
 		return top, nil
 	}
-	if found, ok := findConfigM4(top, 2); ok {
-		return found, nil
+	// findConfigM4 returns the path OF config.m4, so the build directory is its
+	// parent. Returning the match verbatim made phpize run with a file as its
+	// working directory ("not a directory"). This is reached whenever the archive
+	// root holds more than the source tree -- a PECL tarball ships
+	// `package.xml` alongside `<ext>-<version>/`, so singleSubdir above declines
+	// and `top` is still the extraction root.
+	if found, ok := findConfigM4(top, 3); ok {
+		return filepath.Dir(found), nil
 	}
 	return "", fmt.Errorf("could not find config.m4 under the extracted source of `%s`", pkg.Name)
 }
