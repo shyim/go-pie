@@ -259,10 +259,40 @@ A `gd intl zip soap sockets bcmath` install is ~4.5 minutes of pure QEMU per
 image build. Only extensions *not* enabled by default in the official images are
 listed in `bundled:` — caching an already-loaded extension is pointless.
 
-`pdo_firebird` is Debian-only (no Alpine firebird dev package). `odbc` and
-`pdo_odbc` are excluded: `pdo_odbc` needs an explicit
-`--with-pdo-odbc=unixODBC,/usr` and builds, but plain `odbc` still fails to
-configure in these images.
+`pdo_firebird` is Debian-only (no Alpine firebird dev package). `odbc` is
+excluded: its `config.m4` reads the `--enable-odbc=shared` that
+`docker-php-ext-install` always passes as "enable Adabas", then looks for headers
+under `/usr/local/incl` and fails; `--without-adabas` does not override it.
+`pdo_odbc` builds with an explicit `--with-pdo-odbc=unixODBC,/usr`.
+
+### System dependencies for bundled extensions
+
+`--install-system-deps` resolves bundled extensions through the same embedded
+catalog as third-party ones, keyed by extension name. Two things had to be fixed
+for that to work:
+
+* The catalog extractor only matched **single-name** case arms, so every
+  extension upstream declares in a shared arm — `pgsql@debian | pdo_pgsql@debian
+  | pq@debian)` and nine others covering `odbc`, `pdo_odbc`, `oci8`, `pdo_oci`,
+  `sodium`, `sqlsrv`, `pdo_sqlsrv` — was silently absent. `pgsql` then failed
+  with `Cannot find libpq-fe.h` despite `--install-system-deps`.
+* Upstream picks some packages per distro release (`libenchant-2-dev` on
+  Debian ≥ 11, `libenchant-dev` below; `enchant2-dev` not `enchant-dev` on
+  Alpine). The catalog is flat, so both names land in one list — and because
+  apt/apk install atomically, the name that does not exist here fails the whole
+  batch and takes every other dependency with it.
+
+The second is handled the way `install-php-extensions` does it: a single dry run
+(`apt-get install -s` / `apk add --simulate`) reports which packages cannot be
+selected, and those are dropped. One subprocess for the whole list, and it defers
+to the package manager's own resolver, so virtual packages (`libxslt-dev` is
+provided by `libxslt1-dev`) need no name heuristics. If the dry run cannot single
+out the offending names, everything is kept — silently dropping a real build
+dependency would turn a clear "package not found" into a confusing compile error.
+
+Runtime packages that differ per release become an anchored alternation
+(`^(libodbc2|libodbc1)$`) resolved against the target distro, the same mechanism
+already used for versioned library names.
 
 ### Extensions whose configure flags depend on the build environment
 

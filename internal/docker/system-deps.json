@@ -217,11 +217,7 @@
     "enchant": {
       "alpine": {
         "persistent": [
-          "enchant2",
-          "glib",
-          "aspell-libs",
-          "libhunspell",
-          "enchant"
+          "^(enchant2|glib|aspell\\-libs|libhunspell|enchant)$"
         ],
         "build_only": [
           "enchant2-dev",
@@ -233,10 +229,7 @@
       },
       "debian": {
         "persistent": [
-          "libenchant-2-2",
-          "aspell-en",
-          "libhunspell-1.7-0",
-          "libenchant1c2a"
+          "^(libenchant\\-2\\-2|aspell\\-en|libhunspell\\-1\\.7\\-0|libenchant1c2a)$"
         ],
         "build_only": [
           "libenchant-2-dev",
@@ -291,12 +284,7 @@
           "libjpeg-turbo",
           "libpng",
           "libxpm",
-          "libvpx",
-          "libwebp",
-          "libavif",
-          "aom-libs",
-          "libdav1d",
-          "libstdc++"
+          "^(libvpx|libwebp|libavif|aom\\-libs|libdav1d|libstdc\\+\\+)$"
         ],
         "build_only": [
           "freetype-dev",
@@ -319,11 +307,7 @@
           "libjpeg62-turbo",
           "^libpng[0-9]+-[0-9]+$",
           "libxpm4",
-          "^libvpx[0-9]+$",
-          "^libwebp[0-9]+$",
-          "^libavif[0-9]+$",
-          "^libaom[0-9]+$",
-          "^libdav1d[0-9]+$"
+          "^(libvpx[0-9]+|libwebp[0-9]+|libavif[0-9]+|libaom[0-9]+|libdav1d[0-9]+)$"
         ],
         "build_only": [
           "libfreetype6-dev",
@@ -385,10 +369,10 @@
     "geos": {
       "alpine": {
         "persistent": [
-          "geos"
+          "geos-dev"
         ],
         "build_only": [
-          "geos-dev"
+          "geos"
         ]
       },
       "debian": {
@@ -484,7 +468,7 @@
         "persistent": [
           "libevent",
           "libidn",
-          "icu-libs"
+          "^(icu\\-libs|\\$buildRequiredPackageLists_icuPersistent)$"
         ],
         "build_only": [
           "zlib-dev",
@@ -498,7 +482,7 @@
         "persistent": [
           "^libevent[0-9\\.\\-]*$",
           "^libicu[0-9]+$",
-          "^libidn2-[0-9]+$"
+          "^libidn2-[0-9+]$"
         ],
         "build_only": [
           "zlib1g-dev",
@@ -513,13 +497,7 @@
         "persistent": [
           "imagemagick",
           "libgomp",
-          "ghostscript",
-          "libheif",
-          "libjxl",
-          "libraw",
-          "librsvg",
-          "libheif-aom",
-          "libheif-x265"
+          "^(ghostscript|libheif|libjxl|libraw|librsvg|libheif\\-aom|libheif\\-x265)$"
         ],
         "build_only": [
           "imagemagick-dev"
@@ -527,12 +505,8 @@
       },
       "debian": {
         "persistent": [
-          "^libmagickwand-7.q16-[0-9]+$",
-          "^libmagickcore-7.q16-[0-9]+-extra$",
-          "libheif-plugin-aomenc",
-          "^libmagickwand-6.q16-[0-9]+$",
-          "^libmagickcore-6.q16-[0-9]+-extra$",
-          "ghostscript"
+          "ghostscript",
+          "^(libmagickwand-7.q16-[0-9]+|libmagickcore-7.q16-[0-9]+-extra|libheif\\-plugin\\-aomenc|libmagickwand-6.q16-[0-9]+|libmagickcore-6.q16-[0-9]+-extra)$"
         ],
         "build_only": [
           "libmagickwand-dev"
@@ -551,14 +525,14 @@
       },
       "debian": {
         "persistent": [
-          "sgml-base",
-          "libc-client2007e"
+          "^(sgml\\-base|libc\\-client2007e)$"
         ],
         "build_only": [
           "libkrb5-dev",
           "libpam0g-dev",
           "comerr-dev",
           "krb5-multidev",
+          "libc-client2007e",
           "libgssrpc4",
           "libkadm5clnt-mit11",
           "libkadm5srv-mit11",
@@ -674,6 +648,24 @@
         ]
       }
     },
+    "libsodium": {
+      "alpine": {
+        "persistent": [
+          "libsodium"
+        ],
+        "build_only": [
+          "libsodium-dev"
+        ]
+      },
+      "debian": {
+        "persistent": [
+          "^libsodium[0-9]*$"
+        ],
+        "build_only": [
+          "libsodium-dev"
+        ]
+      }
+    },
     "luasandbox": {
       "alpine": {
         "persistent": [
@@ -772,8 +764,7 @@
       },
       "debian": {
         "persistent": [
-          "libmemcachedutil2t64",
-          "libmemcachedutil2"
+          "^(libmemcachedutil2t64|libmemcachedutil2|\\$buildRequiredPackageLists_libssl)$"
         ],
         "build_only": [
           "libmemcached-dev",
@@ -901,6 +892,44 @@
         ]
       }
     },
+    "oci8": {
+      "alpine": {
+        "persistent": [
+          "libaio",
+          "libc6-compat",
+          "libnsl"
+        ],
+        "build_only": [
+          "libarchive-tools"
+        ]
+      },
+      "debian": {
+        "persistent": [
+          "^(libaio1t64|libaio[0-9]*)$"
+        ],
+        "build_only": [
+          "unzip"
+        ]
+      }
+    },
+    "odbc": {
+      "alpine": {
+        "persistent": [
+          "unixodbc"
+        ],
+        "build_only": [
+          "unixodbc-dev"
+        ]
+      },
+      "debian": {
+        "persistent": [
+          "^(libodbc2|libodbc1)$"
+        ],
+        "build_only": [
+          "unixodbc-dev"
+        ]
+      }
+    },
     "openswoole": {
       "alpine": {
         "persistent": [
@@ -971,6 +1000,62 @@
         ]
       }
     },
+    "pdo_oci": {
+      "alpine": {
+        "persistent": [
+          "libaio",
+          "libc6-compat",
+          "libnsl"
+        ],
+        "build_only": [
+          "libarchive-tools"
+        ]
+      },
+      "debian": {
+        "persistent": [
+          "^(libaio1t64|libaio[0-9]*)$"
+        ],
+        "build_only": [
+          "unzip"
+        ]
+      }
+    },
+    "pdo_odbc": {
+      "alpine": {
+        "persistent": [
+          "unixodbc"
+        ],
+        "build_only": [
+          "unixodbc-dev"
+        ]
+      },
+      "debian": {
+        "persistent": [
+          "^(libodbc2|libodbc1)$"
+        ],
+        "build_only": [
+          "unixodbc-dev"
+        ]
+      }
+    },
+    "pdo_pgsql": {
+      "alpine": {
+        "persistent": [
+          "postgresql-libs"
+        ],
+        "build_only": [
+          "postgresql-dev"
+        ]
+      },
+      "debian": {
+        "persistent": [
+          "libpq5"
+        ],
+        "build_only": [
+          "libpq-dev"
+        ]
+      }
+    },
     "pdo_snowflake": {
       "debian": {
         "persistent": [
@@ -981,6 +1066,45 @@
           "cmake",
           "g++",
           "libcurl4-openssl-dev"
+        ]
+      }
+    },
+    "pdo_sqlsrv": {
+      "alpine": {
+        "persistent": [
+          "libstdc++",
+          "unixodbc"
+        ],
+        "build_only": [
+          "unixodbc-dev"
+        ]
+      },
+      "debian": {
+        "persistent": [
+          "unixodbc"
+        ],
+        "build_only": [
+          "unixodbc-dev",
+          "gnupg",
+          "apt-transport-https"
+        ]
+      }
+    },
+    "pgsql": {
+      "alpine": {
+        "persistent": [
+          "postgresql-libs"
+        ],
+        "build_only": [
+          "postgresql-dev"
+        ]
+      },
+      "debian": {
+        "persistent": [
+          "libpq5"
+        ],
+        "build_only": [
+          "libpq-dev"
         ]
       }
     },
@@ -1003,10 +1127,7 @@
       },
       "debian": {
         "persistent": [
-          "libpython3.13",
-          "libpython3.11",
-          "libpython3.9",
-          "libpython3.7"
+          "^(libpython3\\.13|libpython3\\.11|libpython3\\.9|libpython3\\.7)$"
         ],
         "build_only": [
           "python3-dev"
@@ -1025,6 +1146,24 @@
           "libsofthsm2"
         ],
         "build_only": []
+      }
+    },
+    "pq": {
+      "alpine": {
+        "persistent": [
+          "postgresql-libs"
+        ],
+        "build_only": [
+          "postgresql-dev"
+        ]
+      },
+      "debian": {
+        "persistent": [
+          "libpq5"
+        ],
+        "build_only": [
+          "libpq-dev"
+        ]
       }
     },
     "pspell": {
@@ -1084,9 +1223,7 @@
     "redis": {
       "alpine": {
         "persistent": [
-          "zstd",
-          "zstd-libs",
-          "lz4-libs"
+          "^(zstd|zstd\\-libs|lz4\\-libs)$"
         ],
         "build_only": [
           "zstd-dev",
@@ -1095,8 +1232,7 @@
       },
       "debian": {
         "persistent": [
-          "^libzstd[0-9]*$",
-          "liblz4-1"
+          "^(libzstd[0-9]*|liblz4\\-1)$"
         ],
         "build_only": [
           "libzstd-dev",
@@ -1190,7 +1326,7 @@
       },
       "debian": {
         "persistent": [
-          "^libsnappy[0-9]+(v[0-9]+)?$"
+          "^libsnappy1(v[0-9]+)?$"
         ],
         "build_only": [
           "libsnappy-dev"
@@ -1245,6 +1381,24 @@
         ]
       }
     },
+    "sodium": {
+      "alpine": {
+        "persistent": [
+          "libsodium"
+        ],
+        "build_only": [
+          "libsodium-dev"
+        ]
+      },
+      "debian": {
+        "persistent": [
+          "^libsodium[0-9]*$"
+        ],
+        "build_only": [
+          "libsodium-dev"
+        ]
+      }
+    },
     "solr": {
       "alpine": {
         "persistent": [],
@@ -1280,6 +1434,27 @@
         "persistent": [],
         "build_only": [
           "zlib1g-dev"
+        ]
+      }
+    },
+    "sqlsrv": {
+      "alpine": {
+        "persistent": [
+          "libstdc++",
+          "unixodbc"
+        ],
+        "build_only": [
+          "unixodbc-dev"
+        ]
+      },
+      "debian": {
+        "persistent": [
+          "unixodbc"
+        ],
+        "build_only": [
+          "unixodbc-dev",
+          "gnupg",
+          "apt-transport-https"
         ]
       }
     },
@@ -1322,10 +1497,7 @@
         "persistent": [
           "postgresql-libs",
           "libstdc++",
-          "c-ares",
-          "zstd-libs",
-          "libssh2",
-          "liburing"
+          "^(c\\-ares|zstd\\-libs|libssh2|liburing)$"
         ],
         "build_only": [
           "curl-dev",
@@ -1343,12 +1515,7 @@
       "debian": {
         "persistent": [
           "libpq5",
-          "libc-ares2",
-          "libbrotli1",
-          "^libzstd[0-9]*$",
-          "libfbclient2",
-          "^libssh2-[0-9]+$",
-          "liburing2"
+          "^(libc\\-ares2|libbrotli1|libzstd[0-9]*|libfbclient2|libssh2(-[0-9]+)|liburing2)$"
         ],
         "build_only": [
           "libcurl4-openssl-dev",
@@ -1409,9 +1576,7 @@
       "alpine": {
         "persistent": [
           "openblas",
-          "lapack",
-          "libexecinfo",
-          "liblapack"
+          "^(lapack|libexecinfo|liblapack)$"
         ],
         "build_only": [
           "lapack-dev",
@@ -1422,13 +1587,7 @@
       "debian": {
         "persistent": [
           "liblapacke",
-          "gfortran-6",
-          "libopenblas-base",
-          "gfortran-8",
-          "gfortran-10",
-          "gfortran-12",
-          "libopenblas0",
-          "libgfortran5"
+          "^(gfortran\\-6|libopenblas\\-base|gfortran\\-8|gfortran\\-10|gfortran\\-12|libopenblas0|libgfortran5)$"
         ],
         "build_only": [
           "liblapack-dev",
@@ -1445,8 +1604,7 @@
     "tidy": {
       "alpine": {
         "persistent": [
-          "tidyhtml",
-          "tidyhtml-libs"
+          "^(tidyhtml|tidyhtml\\-libs)$"
         ],
         "build_only": [
           "tidyhtml-dev"
@@ -1702,19 +1860,15 @@
     "zmq": {
       "alpine": {
         "persistent": [
-          "zeromq"
-        ],
-        "build_only": [
           "zeromq-dev"
-        ]
+        ],
+        "build_only": []
       },
       "debian": {
         "persistent": [
-          "^libzmq[0-9]+$"
-        ],
-        "build_only": [
           "libzmq3-dev"
-        ]
+        ],
+        "build_only": []
       }
     },
     "zookeeper": {

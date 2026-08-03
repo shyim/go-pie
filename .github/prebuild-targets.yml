@@ -129,11 +129,16 @@ bundled:
   - name: xsl
   - name: zip
 
+  # Needs an explicit --with-pdo-odbc=unixODBC,/usr (see docker.configureFlags)
+  # plus the unixODBC dev package, which the catalog now provides.
+  - name: pdo_odbc
+
   # Debian-only: Alpine has no firebird development package, so configure fails.
   - name: pdo_firebird
     bases: [bookworm, trixie]
 
-  # `odbc` and `pdo_odbc` are ABSENT. pdo_odbc needs an explicit
-  # --with-pdo-odbc=unixODBC,/usr (now in docker.configureFlags) and builds, but
-  # plain `odbc` still fails to configure against unixODBC in these images; both
-  # are left out until that is understood rather than shipped half-working.
+  # `odbc` is ABSENT. Its config.m4 reads `--enable-odbc=shared` (which
+  # docker-php-ext-install always passes) as "enable Adabas", then looks for
+  # headers under /usr/local/incl and fails. --without-adabas does not
+  # override it. Left out until that is understood rather than shipped
+  # half-working; `pdo_odbc` covers the common use case.

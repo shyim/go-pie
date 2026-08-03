@@ -47,6 +47,23 @@ func (pm PackageManager) String() string {
 	}
 }
 
+// RefreshIndex updates the package index so availability queries see the real
+// catalogue. Official PHP images ship with apt's lists emptied and no apk index
+// cached, so `apt-cache` / `apk search` return nothing at all until this has
+// run -- which would make every availability probe report "not available" and
+// strip real packages. Idempotent and safe to call more than once.
+func (pm PackageManager) RefreshIndex(ctx context.Context) error {
+	switch pm {
+	case PMApt:
+		return procutil.Run(ctx, "apt-get", []string{"update", "-q"}, ".", "apt-get update")
+	case PMApk:
+		return procutil.Run(ctx, "apk", []string{"update", "-q"}, ".", "apk update")
+	case PMUnsupported:
+		return nil
+	}
+	return nil
+}
+
 // Install installs the given packages (no-op when the list is empty).
 func (pm PackageManager) Install(ctx context.Context, packages []string) error {
 	if len(packages) == 0 {
@@ -54,7 +71,7 @@ func (pm PackageManager) Install(ctx context.Context, packages []string) error {
 	}
 	switch pm {
 	case PMApt:
-		if err := procutil.Run(ctx, "apt-get", []string{"update", "-q"}, ".", "apt-get update"); err != nil {
+		if err := pm.RefreshIndex(ctx); err != nil {
 			return err
 		}
 		args := append([]string{"install", "-qqy", "--no-install-recommends"}, packages...)
@@ -164,6 +181,107 @@ func (pm PackageManager) ResolveRuntimePackages(ctx context.Context, entries []s
 		}
 	}
 	return out
+}
+
+// AvailableBuildPackages filters build-only packages down to those the target
+// distro can actually install.
+//
+// The catalog is flat, but upstream picks some packages per distro release --
+// `libenchant-2-dev` on Debian >= 11 and `libenchant-dev` below it, `enchant2-dev`
+// rather than `enchant-dev` on Alpine. Both names end up in one list, and because
+// apt/apk install atomically the one that does not exist fails the whole batch,
+// taking every other build dependency with it.
+//
+// Selectability is decided by a single DRY RUN (`apt-get install -s` / `apk add
+// --simulate`), the same approach docker-php-extension-installer uses. That is
+// one subprocess for the whole list instead of one probe per package, and it
+// defers to the package manager's own resolver, so virtual packages (`libxslt-dev`
+// is provided by `libxslt1-dev`) are handled without any name heuristics.
+//
+// If the dry run cannot single out the offending names, every package is KEPT:
+// silently stripping a real build dependency would turn a clear "package not
+// found" into a confusing compile error further along.
+func (pm PackageManager) AvailableBuildPackages(ctx context.Context, packages []string) []string {
+	if len(packages) == 0 {
+		return nil
+	}
+
+	var candidates []string
+	seen := make(map[string]struct{})
+	for _, name := range packages {
+		if IsPattern(name) {
+			// A pattern cannot be handed to apt/apk literally; resolve it the
+			// same way runtime packages are.
+			if names, err := pm.matchPattern(ctx, name); err == nil {
+				for _, n := range names {
+					pushUnique(&candidates, seen, n)
+				}
+			}
+			continue
+		}
+		pushUnique(&candidates, seen, name)
+	}
+	if len(candidates) == 0 {
+		return nil
+	}
+
+	unselectable := pm.unselectable(ctx, candidates)
+	if len(unselectable) == 0 {
+		return candidates
+	}
+
+	var out []string
+	for _, name := range candidates {
+		if _, bad := unselectable[name]; bad {
+			fmt.Fprintf(os.Stderr,
+				"  note: build package `%s` is not available on this distro; skipping\n", name)
+			continue
+		}
+		out = append(out, name)
+	}
+	return out
+}
+
+// unselectable returns the subset of packages the package manager cannot select,
+// as reported by a dry-run install. An empty result means "install them all" --
+// either everything is selectable, or the dry run itself failed and the caller
+// should not start dropping packages on a guess.
+func (pm PackageManager) unselectable(ctx context.Context, packages []string) map[string]struct{} {
+	bad := make(map[string]struct{})
+
+	var args []string
+	switch pm {
+	case PMApt:
+		args = append([]string{"install", "-s", "-y", "--no-install-recommends"}, packages...)
+	case PMApk:
+		args = append([]string{"add", "--simulate"}, packages...)
+	case PMUnsupported:
+		return bad
+	}
+
+	program := "apt-get"
+	if pm == PMApk {
+		program = "apk"
+	}
+	_, err := procutil.Capture(ctx, program, args)
+	if err == nil {
+		// Every package is selectable.
+		return bad
+	}
+	// apt and apk both report unselectable packages on stderr, which Capture
+	// folds into the error message (it discards stdout on a non-zero exit).
+	//   apt: `E: Unable to locate package <name>`
+	//        `E: Package '<name>' has no installation candidate`
+	//   apk: `  <name> (no such package):`
+	diagnostic := err.Error()
+	for _, name := range packages {
+		if strings.Contains(diagnostic, "Unable to locate package "+name) ||
+			strings.Contains(diagnostic, "Package '"+name+"' has no installation candidate") ||
+			strings.Contains(diagnostic, name+" (no such package)") {
+			bad[name] = struct{}{}
+		}
+	}
+	return bad
 }
 
 func (pm PackageManager) matchPattern(ctx context.Context, pattern string) ([]string, error) {
