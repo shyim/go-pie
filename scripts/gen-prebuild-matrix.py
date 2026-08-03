@@ -34,6 +34,10 @@ import urllib.request
 
 TARGETS = ".github/prebuild-targets.yml"
 PACKAGIST_P2 = "https://repo.packagist.org/p2/{}.json"
+# The authoritative patch version behind each `php:<minor>-*` tag. Entries for
+# EOL minors are null and prerelease entries carry a non-numeric version
+# ("8.6.0alpha3"); php_patch_versions() skips both.
+PHP_VERSIONS_JSON = "https://raw.githubusercontent.com/docker-library/php/master/versions.json"
 
 # Arch token -> the GitHub-hosted runner that builds it natively. Native
 # runners rather than QEMU: an emulated compile of a large extension blows the
@@ -68,7 +72,7 @@ def load_targets(path):
     except OSError as e:
         fail(f"reading {path}: {e}")
 
-    cfg = {"defaults": {}, "extensions": []}
+    cfg = {"defaults": {}, "extensions": [], "bundled": []}
     section = None
     current = None
     for raw in text.splitlines():
@@ -77,21 +81,22 @@ def load_targets(path):
             continue
         if not line.startswith(" ") and line.endswith(":"):
             section = line[:-1]
+            current = None
             continue
         if section == "defaults":
             k, _, v = line.strip().partition(":")
             cfg["defaults"][k.strip()] = parse_scalar(v.strip())
-        elif section == "extensions":
+        elif section in ("extensions", "bundled"):
             stripped = line.strip()
             if stripped.startswith("- "):
                 current = {}
-                cfg["extensions"].append(current)
+                cfg[section].append(current)
                 stripped = stripped[2:]
             if current is None:
                 fail(f"{path}: key outside a list item: {line!r}")
             k, _, v = stripped.partition(":")
             current[k.strip()] = parse_scalar(v.strip())
-    if not cfg["extensions"]:
+    if not cfg["extensions"] and not cfg["bundled"]:
         fail(f"{path}: no extensions declared")
     return cfg
 
@@ -208,6 +213,25 @@ def php_require(release):
     return constraint if isinstance(constraint, str) else ""
 
 
+def php_patch_versions():
+    """Map each PHP minor to the exact patch version the official images ship.
+
+    A bundled extension's source IS the PHP source tree, so its cell is keyed on
+    the full patch version (see oci.NewBundledCell). That patch bumps whenever
+    docker-library publishes a new PHP release, which is exactly why the matrix
+    reads it live from versions.json instead of pinning it.
+    """
+    data = http_json(PHP_VERSIONS_JSON)
+    out = {}
+    for minor, info in data.items():
+        version = info.get("version") if isinstance(info, dict) else None
+        if isinstance(version, str) and re.fullmatch(r"\d+\.\d+\.\d+", version):
+            out[minor] = version
+    if not out:
+        fail("could not read any PHP patch versions from docker-library versions.json")
+    return out
+
+
 def packagist_versions(package, keep):
     """Newest `keep` stable versions of a package, with their php constraints.
 
@@ -303,9 +327,63 @@ def build_matrix(cfg):
                             include.append(
                                 cell(name, package, version, php, base, ts, arch)
                             )
+    include += bundled_cells(cfg, default_php, default_bases, default_arches)
+
     if not include:
         fail("matrix is empty; every declared cell was pruned")
     return include
+
+
+def bundled_cells(cfg, default_php, default_bases, default_arches):
+    """Expand the `bundled:` section into cells.
+
+    Bundled extensions (gd, intl, zip, …) are compiled from the PHP source tree
+    by the `docker-php-ext-*` helpers, so they have no Packagist package and no
+    version of their own: the cell's version IS the PHP patch version, read live
+    from docker-library's versions.json.
+    """
+    entries = cfg.get("bundled") or []
+    if not entries:
+        return []
+
+    patches = php_patch_versions()
+    out = []
+    for ext in entries:
+        name = ext.get("name")
+        if not name:
+            fail(f"bundled entry needs a `name`: {ext}")
+        if not re.fullmatch(r"[a-z0-9_]{1,64}", name):
+            fail(f"bundled: invalid extension name {name!r}")
+
+        phps = as_list(ext.get("php", default_php))
+        bases = as_list(ext.get("bases", default_bases))
+        arches = as_list(ext.get("arches", default_arches))
+        allow_zts = ext.get("zts", True)
+
+        for base in bases:
+            if base not in BASES:
+                fail(f"{name}: unknown base image {base!r}; known: {', '.join(BASES)}")
+        for arch in arches:
+            if arch not in RUNNERS:
+                fail(f"{name}: unknown arch {arch!r}; known: {', '.join(sorted(RUNNERS))}")
+
+        for php in phps:
+            patch = patches.get(str(php))
+            if not patch:
+                # A minor with no published patch version has no image to build
+                # in; skip rather than emit a cell that cannot run.
+                print(f"note: no published patch version for PHP {php}; "
+                      f"skipping bundled {name}", file=sys.stderr)
+                continue
+            for base in bases:
+                for ts in ("nts", "zts"):
+                    if ts == "zts" and not allow_zts:
+                        continue
+                    for arch in arches:
+                        c = cell(name, "", patch, php, base, ts, arch)
+                        c["bundled"] = "true"
+                        out.append(c)
+    return out
 
 
 def cell(name, package, version, php, base, ts, arch):
@@ -324,6 +402,8 @@ def cell(name, package, version, php, base, ts, arch):
         "arch": arch,
         "image": image,
         "runner": RUNNERS[arch],
+        # Matrix values must be strings for the workflow's `if:` comparisons.
+        "bundled": "false",
     }
 
 
@@ -335,6 +415,11 @@ def as_list(v):
     return [v]
 
 
+# GitHub refuses a matrix with more than 256 jobs, so a shard that large would
+# fail the whole run rather than degrade.
+MAX_MATRIX_JOBS = 256
+
+
 def shard(items, spec):
     m = re.fullmatch(r"(\d+)/(\d+)", spec)
     if not m:
@@ -342,6 +427,16 @@ def shard(items, spec):
     index, total = int(m.group(1)), int(m.group(2))
     if total < 1 or index >= total:
         fail(f"--shard {spec} is out of range")
+    # Check the whole split, not just this shard: every shard runs as its own
+    # matrix, so one oversized shard breaks the run even if this one is fine.
+    biggest = max(len(items[i::total]) for i in range(total))
+    if biggest > MAX_MATRIX_JOBS:
+        needed = -(-len(items) // MAX_MATRIX_JOBS)
+        fail(
+            f"--shard {spec} would put {biggest} cells in one shard, over "
+            f"GitHub's {MAX_MATRIX_JOBS}-job matrix cap; use at least "
+            f"{needed} shards for {len(items)} cells"
+        )
     # Stride rather than block slicing: consecutive cells of one extension
     # differ only by arch/ts, so striding spreads a slow extension's cells over
     # all shards instead of stacking them in one.
@@ -360,14 +455,22 @@ def main():
     ap.add_argument("--group-index", action="store_true",
                     help="emit the deduplicated ext+version index matrix instead")
     ap.add_argument("--only", help="restrict to a single ext_name")
+    ap.add_argument(
+        "--min-shards",
+        action="store_true",
+        help="print the fewest shards that keep every shard under the matrix cap",
+    )
     args = ap.parse_args()
 
     cfg = load_targets(args.targets)
     if args.only:
+        # `only` may name a third-party extension (`ext_name`) or a bundled one
+        # (`name`); filter both sections so either works.
         cfg["extensions"] = [
             e for e in cfg["extensions"] if e.get("ext_name") == args.only
         ]
-        if not cfg["extensions"]:
+        cfg["bundled"] = [b for b in cfg["bundled"] if b.get("name") == args.only]
+        if not cfg["extensions"] and not cfg["bundled"]:
             fail(f"--only {args.only!r} matches no declared extension")
     include = build_matrix(cfg)
 
@@ -379,6 +482,10 @@ def main():
                 "version": c["version"],
             }
         print(json.dumps({"include": list(pairs.values())}))
+        return
+
+    if args.min_shards:
+        print(max(1, -(-len(include) // MAX_MATRIX_JOBS)))
         return
 
     if args.shard:

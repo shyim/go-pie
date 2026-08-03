@@ -240,7 +240,7 @@ func RunInstall(ctx context.Context, args *InstallArgs, mode Mode) error {
 		}
 		var err error
 		if t.isBundled {
-			err = installBundled(ctx, t.bundled, plat, mode)
+			err = installBundled(ctx, t.bundled, plat, args, mode, os.Stdout)
 		} else {
 			err = buildAndInstallInner(ctx, t.pkg, plat, args, mode, plat.MakeParallelJobs, os.Stdout, false)
 		}
@@ -403,15 +403,51 @@ func writeIniOutcome(out io.Writer, ini *install.IniOutcome, extensionName strin
 	}
 }
 
+// bundledPackage synthesizes the ResolvedPackage that the install/INI helpers
+// need for a bundled extension. Bundled extensions never go through the
+// resolver (they are not Packagist packages), but installing a prebuilt .so and
+// writing its INI entry only needs the name, type and priority.
+//
+// `Version` is the full PHP patch version because that is what a bundled
+// extension's source actually is -- see oci.NewBundledCell.
+func bundledPackage(name string, plat *platform.TargetPlatform) *resolver.ResolvedPackage {
+	return &resolver.ResolvedPackage{
+		Name:          name,
+		Version:       plat.PHP.Version.String(),
+		ExtensionName: name,
+		ExtensionType: resolver.PhpModule,
+		Priority:      docker.BundledIniPriority(name),
+	}
+}
+
+//nolint:errcheck // The caller cannot usefully recover from presentation output failures.
 func installBundled(
 	ctx context.Context,
 	name string,
 	plat *platform.TargetPlatform,
+	args *InstallArgs,
 	mode Mode,
+	out io.Writer,
 ) error {
+	// `gpie build <bundled> --emit-oci` is how the nightly workflow produces a
+	// bundled cell: build with the docker-php-ext-* helpers, then emit the
+	// artifact from the .so they installed.
+	if mode == ModeBuildOnly && args.EmitOci != nil && *args.EmitOci != "" {
+		return emitBundled(ctx, name, plat, args, out)
+	}
 	if mode != ModeInstall {
-		fmt.Printf("%s `%s` is a bundled extension; `download`/`build` do not apply (installs via docker-php-ext-install).\n",
+		fmt.Fprintf(out, "%s `%s` is a bundled extension; `download`/`build` do not apply (installs via docker-php-ext-install).\n",
 			style.ForStdout().Yellow("note:"), name)
+		return nil
+	}
+
+	// A prebuilt bundled .so skips the docker-php-ext-install compile entirely,
+	// which is the whole point on emulated arm64 where that compile costs
+	// minutes rather than seconds.
+	if ok, err := tryPrebuiltBundled(ctx, name, plat, args, out); err != nil {
+		fmt.Fprintf(out, "%s prebuilt lookup failed, building from source: %v\n",
+			style.ForStdout().Yellow("note:"), err)
+	} else if ok {
 		return nil
 	}
 
@@ -420,14 +456,136 @@ func installBundled(
 		return fmt.Errorf("installing bundled extension %s: %w", name, err)
 	}
 
-	fmt.Printf("%s %s (bundled)\n", style.ForStdout().Green("Install complete:"), name)
+	fmt.Fprintf(out, "%s %s (bundled)\n", style.ForStdout().Green("Install complete:"), name)
 	if ini != "" {
-		fmt.Printf("%s enabled via %s\n", style.ForStdout().Green("✅"), ini)
+		fmt.Fprintf(out, "%s enabled via %s\n", style.ForStdout().Green("✅"), ini)
 	} else {
-		fmt.Printf("%s installed; enable it if PHP does not load it automatically\n",
+		fmt.Fprintf(out, "%s installed; enable it if PHP does not load it automatically\n",
 			style.ForStdout().Yellow("⚠"))
 	}
 	return nil
+}
+
+// tryPrebuiltBundled is the bundled-extension counterpart of tryPrebuilt. It
+// keys on the bundled cell (full PHP patch version) and, on a hit, installs the
+// .so and writes the enabling INI without invoking phpize/make.
+//
+//nolint:errcheck // The caller cannot usefully recover from presentation output failures.
+func tryPrebuiltBundled(
+	ctx context.Context,
+	name string,
+	plat *platform.TargetPlatform,
+	args *InstallArgs,
+	out io.Writer,
+) (bool, error) {
+	registryStr := args.prebuiltRegistry()
+	if registryStr == nil {
+		return false, nil
+	}
+	distro := docker.DetectDistro()
+	if distro == nil {
+		return false, nil
+	}
+
+	configureOptions := docker.BundledConfigureFlags(name)
+	cell := oci.NewBundledCell(name, plat, distro, configureOptions)
+	registry, err := oci.ParseRegistry(*registryStr)
+	if err != nil {
+		return false, err
+	}
+
+	prebuilt, err := oci.ResolvePrebuilt(ctx, registry, &cell)
+	if err != nil {
+		if errors.Is(err, oci.ErrPrebuiltNotFound) {
+			fmt.Fprintf(out, "%s no prebuilt for %s — building from source\n",
+				style.ForStdout().Yellow("cache miss:"), cell.ID())
+			return false, nil
+		}
+		return false, err
+	}
+
+	if prebuilt.Manifest.PHPAPI != plat.PHP.APIVersion {
+		fmt.Fprintf(out, "%s prebuilt PHP API %s != target %s — building from source\n",
+			style.ForStdout().Yellow("cache miss:"), prebuilt.Manifest.PHPAPI, plat.PHP.APIVersion)
+		return false, nil
+	}
+
+	if err := verifyPrebuiltPolicy(ctx, prebuilt, args.Verify.Policy()); err != nil {
+		return false, fmt.Errorf("prebuilt verification policy: %w", err)
+	}
+
+	fmt.Fprintf(out, "%s %s (%d bytes)\n",
+		style.ForStdout().Green("Using prebuilt:"), cell.ID(), len(prebuilt.SoBytes))
+
+	runtime := prebuilt.Manifest.RuntimePackagesFor(distro.FamilyToken())
+	if len(runtime) > 0 {
+		if args.InstallSystemDeps {
+			deps := docker.SystemDeps{Persistent: runtime}
+			if err := docker.InstallSystemDeps(ctx, &deps, distro); err != nil {
+				return false, fmt.Errorf("installing prebuilt runtime packages: %w", err)
+			}
+			fmt.Fprintf(out, "%s runtime packages: %s\n",
+				style.ForStdout().Green("Installed"), strings.Join(runtime, ", "))
+		} else {
+			fmt.Fprintf(out, "%s prebuilt needs runtime packages: %s. Re-run with --install-system-deps.\n",
+				style.ForStdout().Yellow("note:"), strings.Join(runtime, ", "))
+		}
+	}
+
+	tmp, err := os.CreateTemp("", "gpie-prebuilt-*.so")
+	if err != nil {
+		return false, fmt.Errorf("staging prebuilt .so: %w", err)
+	}
+	tmpPath := tmp.Name()
+	defer func() { _ = os.Remove(tmpPath) }()
+	if _, err := tmp.Write(prebuilt.SoBytes); err != nil {
+		_ = tmp.Close()
+		return false, fmt.Errorf("writing prebuilt .so: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return false, fmt.Errorf("closing staged prebuilt .so: %w", err)
+	}
+
+	built := buildpkg.FromPrebuilt(tmpPath)
+	pkg := bundledPackage(name, plat)
+	outcome, err := install.Install(ctx, pkg, &built, plat, !args.SkipEnable)
+	if err != nil {
+		return false, fmt.Errorf("installing prebuilt extension: %w", err)
+	}
+
+	fmt.Fprintf(out, "%s %s (bundled, prebuilt, no compilation)\n",
+		style.ForStdout().Green("Install complete:"), outcome.InstalledSo)
+	writeIniOutcome(out, &outcome.Ini, name)
+	return true, nil
+}
+
+// emitBundled builds a bundled extension with the docker-php-ext-* helpers and
+// emits its OCI artifact, for the nightly prebuild workflow.
+func emitBundled(
+	ctx context.Context,
+	name string,
+	plat *platform.TargetPlatform,
+	args *InstallArgs,
+	out io.Writer,
+) error {
+	if _, err := docker.InstallBundled(ctx, name, plat.MakeParallelJobs); err != nil {
+		return fmt.Errorf("building bundled extension %s: %w", name, err)
+	}
+
+	// The helpers install straight into extension_dir; that .so is the artifact.
+	soPath := plat.PHP.SharedObjectPath(name)
+	if _, err := os.Stat(soPath); err != nil {
+		return fmt.Errorf("bundled extension %s did not produce %s: %w", name, soPath, err)
+	}
+
+	// docker-php-ext-install also writes an enabling INI. Remove it so the
+	// emitted artifact describes only the .so: a consumer of this cell writes
+	// its own INI through the normal install path.
+	if iniDir, ok := docker.PhpIniConfDir(); ok {
+		_ = os.Remove(filepath.Join(iniDir, "docker-php-ext-"+name+".ini"))
+	}
+
+	return emitOciArtifactBundled(ctx, name, plat, docker.BundledConfigureFlags(name), soPath, *args.EmitOci, out)
 }
 
 type CleanupDeps struct {
@@ -735,6 +893,93 @@ func verifyPrebuiltPolicy(ctx context.Context, prebuilt *oci.Prebuilt, policy do
 	if !verified {
 		return errors.New("attestation support is not built into this binary")
 	}
+	return nil
+}
+
+// emitOciArtifactBundled emits the OCI artifact for a PHP-bundled extension.
+//
+// It mirrors emitOciArtifact but keys on the bundled cell (full PHP patch
+// version, see oci.NewBundledCell) and takes its runtime packages from the
+// embedded catalog by name, since a bundled extension has no Packagist
+// `LibRequires` to consult.
+//
+//nolint:errcheck // The caller cannot usefully recover from presentation output failures.
+func emitOciArtifactBundled(
+	ctx context.Context,
+	name string,
+	plat *platform.TargetPlatform,
+	configureOptions []string,
+	soPath string,
+	dir string,
+	out io.Writer,
+) error {
+	distro := docker.DetectDistro()
+	if distro == nil {
+		return errors.New("--emit-oci requires running inside a Linux distro (Docker image)")
+	}
+
+	cell := oci.NewBundledCell(name, plat, distro, configureOptions)
+
+	soBytes, err := os.ReadFile(soPath)
+	if err != nil {
+		return fmt.Errorf("reading built .so: %w", err)
+	}
+	sum := sha256.Sum256(soBytes)
+
+	runtimePackages := make(map[string][]string)
+	if deps := docker.ResolveSystemDeps(name, nil, distro); deps != nil && len(deps.Deps.Persistent) > 0 {
+		pm := docker.PackageManagerForDistro(distro)
+		if concrete := pm.ResolveRuntimePackages(ctx, deps.Deps.Persistent); len(concrete) > 0 {
+			runtimePackages[distro.FamilyToken()] = concrete
+		}
+	}
+
+	manifest := oci.ExtManifest{
+		ManifestVersion:       oci.ManifestVersion,
+		Extension:             name,
+		Version:               cell.Version,
+		ExtensionType:         resolver.PhpModule.ComposerType(),
+		IniDirective:          resolver.PhpModule.IniDirective(),
+		Priority:              docker.BundledIniPriority(name),
+		Cell:                  cell.ID(),
+		PHP:                   cell.PHP,
+		PHPAPI:                plat.PHP.APIVersion,
+		Distro:                cell.Distro,
+		Arch:                  cell.Arch,
+		ThreadSafety:          cell.TSToken(),
+		Debug:                 cell.Debug,
+		ConfigureOptions:      configureOptions,
+		RuntimePackages:       runtimePackages,
+		SoFile:                name + ".so",
+		SoSha256:              hex.EncodeToString(sum[:]),
+		SourceRef:             "php@" + plat.PHP.Version.String(),
+		Builder:               "gpie",
+		AttestationRepository: os.Getenv("GITHUB_REPOSITORY"),
+	}
+
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("creating --emit-oci dir: %w", err)
+	}
+	configJson, err := manifest.ToJSON()
+	if err != nil {
+		return fmt.Errorf("serializing manifest to JSON: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), configJson, 0644); err != nil {
+		return fmt.Errorf("writing config.json: %w", err)
+	}
+	layer, err := buildLayerTar(manifest.SoFile, soBytes)
+	if err != nil {
+		return fmt.Errorf("building layer tar: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "layer.tar.gz"), layer, 0644); err != nil {
+		return fmt.Errorf("writing layer.tar.gz: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "cell.txt"), []byte(cell.ID()), 0644); err != nil {
+		return fmt.Errorf("writing cell.txt: %w", err)
+	}
+
+	fmt.Fprintf(out, "%s OCI artifact for %s → %s\n",
+		style.ForStdout().Green("Emitted"), cell.ID(), dir)
 	return nil
 }
 

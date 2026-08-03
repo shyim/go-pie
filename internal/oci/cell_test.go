@@ -3,6 +3,7 @@ package oci
 import (
 	"testing"
 
+	"github.com/shyim/go-pie/internal/docker"
 	"github.com/shyim/go-pie/internal/platform"
 )
 
@@ -54,6 +55,40 @@ func TestCellIDFormat(t *testing.T) {
 	}
 	if got := cell.RepoTag(); got != "redis:6.3.0" {
 		t.Errorf("cell.RepoTag() = %q", got)
+	}
+}
+
+// A bundled extension is compiled from the PHP source tree and has no version
+// of its own, so both its version and its PHP axis must carry the full patch
+// version. Keying on major.minor would let an 8.4.24-built intl.so serve an
+// 8.4.25 runtime, which phpApi cannot catch because the Zend Module API only
+// changes per minor.
+func TestBundledCellUsesFullPatchVersion(t *testing.T) {
+	php := &platform.PhpBinary{
+		Version:      platform.PhpVersion{Major: 8, Minor: 4, Patch: 24},
+		APIVersion:   "20240924",
+		Architecture: platform.ArchX86_64,
+		ExtensionDir: "/usr/local/lib/php/extensions",
+	}
+	plat := platform.TargetPlatformFixture(platform.OSLinux, platform.NonThreadSafe, php)
+	distro := &docker.Distro{ID: "alpine", VersionID: "3.24.1", Family: docker.FamilyAlpine}
+
+	cell := NewBundledCell("intl", plat, distro, nil)
+
+	want := "intl/8.4.24/php8.4.24/alpine@3.24.1/x86_64/nts/nodebug/cfg-00000000"
+	if got := cell.ID(); got != want {
+		t.Errorf("NewBundledCell().ID() = %q, want %q", got, want)
+	}
+	if cell.Version != "8.4.24" || cell.PHP != "8.4.24" {
+		t.Errorf("version = %q, php = %q; both must be the full patch version",
+			cell.Version, cell.PHP)
+	}
+
+	// A third-party cell for the same target keeps the major.minor PHP axis, so
+	// the two keying rules must not converge.
+	third := NewCell("redis", "6.3.0", plat, distro, nil)
+	if third.PHP != "8.4" {
+		t.Errorf("NewCell PHP axis = %q, want major.minor 8.4", third.PHP)
 	}
 }
 

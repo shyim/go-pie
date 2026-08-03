@@ -225,6 +225,45 @@ workflow signs and attests what it builds, so building from a republisher
 would launder that provenance into something that looks first-party. protobuf
 is excluded for exactly this reason: it has no official Packagist package.
 
+### PHP-bundled extensions
+
+Bundled extensions (`gd`, `intl`, `zip`, …) are built by the `docker-php-ext-*`
+helpers from the PHP source tree, not resolved from Packagist. They are cached
+too, keyed by a **second cell rule**: `oci.NewBundledCell` puts the full PHP
+**patch** version in both the version and the PHP axis, e.g.
+
+```
+intl/8.4.24/php8.4.24/alpine@3.24.1/aarch64/zts/nodebug/cfg-00000000
+```
+
+Most of them carry no version of their own — `intl` and `gd` have no
+`PHP_*_VERSION` at all — so their source *is* one exact PHP release. Keying on
+major.minor would let an 8.4.24-built `intl.so` serve an 8.4.25 runtime, and
+`phpApi` cannot catch it because the Zend Module API only changes per minor.
+Third-party extensions keep the major.minor axis (`NewCell`): they have a real
+upstream version and are ABI-stable across a minor's patches.
+
+Why cache something that compiles in seconds: natively these are 1–10s, but on
+an **emulated** arm64 runner the same builds take 22–105s. Measured on one host,
+PHP 8.4, `-j2`:
+
+| ext | native | emulated |
+| --- | --- | --- |
+| intl | 17s | 105s |
+| gd | 7s | 55s |
+| bcmath | 2s | 39s |
+| soap / sockets | 2s | 28s |
+| zip | 3s | 22s |
+
+A `gd intl zip soap sockets bcmath` install is ~4.5 minutes of pure QEMU per
+image build. Only extensions *not* enabled by default in the official images are
+listed in `bundled:` — caching an already-loaded extension is pointless.
+
+`pdo_firebird` is Debian-only (no Alpine firebird dev package). `odbc` and
+`pdo_odbc` are excluded: `pdo_odbc` needs an explicit
+`--with-pdo-odbc=unixODBC,/usr` and builds, but plain `odbc` still fails to
+configure in these images.
+
 ### Extensions whose configure flags depend on the build environment
 
 `redis` and `memcached` decide `--enable-*-igbinary` / `--enable-*-msgpack`
@@ -270,9 +309,18 @@ step assembles/updates the per-version OCI index and pushes to GHCR.
 the index descriptor, and `ResolvePrebuilt` falls back to fetching each child
 manifest when a descriptor lacks `sh.gpie.cell`. With hundreds of cells per
 `ext@version` that turns one lookup into hundreds of serial round-trips, on
-every miss. The index job therefore reads each child's cell annotation and
-re-applies it to the descriptor, keeping both a hit and a miss to a single
-`GET` of the index.
+every miss.
+
+`--annotation` does **not** fix this: it writes *index-level* annotations, and
+oras exposes no per-descriptor annotation flag (verified against oras 1.3.0). So
+the index job builds the index with `-o -`, injects `sh.gpie.cell` into each
+entry of `manifests[]` keyed by digest, and pushes the result with
+`oras manifest push` — keeping both a hit and a miss to a single `GET`.
+
+Reading the cell id back out of a child also needs care: `oras manifest fetch
+--format go-template` renders the *descriptor*, which has no annotations, so
+`index .annotations` aborts the command with "index of untyped nil" rather than
+returning empty. The job parses the manifest body as JSON instead.
 
 ## Failure modes & guarantees
 
