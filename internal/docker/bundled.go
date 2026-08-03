@@ -112,7 +112,8 @@ func InstallBundled(ctx context.Context, name string, jobs int) (string, error) 
 }
 
 func configureFlags(name string) []string {
-	if name == "gd" {
+	switch name {
+	case "gd":
 		return []string{
 			"--enable-gd",
 			"--with-webp",
@@ -121,8 +122,43 @@ func configureFlags(name string) []string {
 			"--with-freetype",
 			"--with-avif",
 		}
+	case "pdo_odbc":
+		// pdo_odbc does not detect a driver on its own; without an explicit
+		// driver,dir pair `docker-php-ext-install pdo_odbc` fails to configure.
+		return []string{"--with-pdo-odbc=unixODBC,/usr"}
 	}
 	return nil
+}
+
+// BundledConfigureFlags is the exported view of the configure flags used for a
+// bundled extension. The prebuilt cache hashes these into the cell id, so the
+// emit side and the install side must agree on them exactly -- a divergence is
+// a permanent cache miss.
+func BundledConfigureFlags(name string) []string {
+	return configureFlags(name)
+}
+
+// BundledIniPriority is the INI load priority for a bundled extension.
+//
+// `docker-php-ext-install` writes `docker-php-ext-<name>.ini` with no numeric
+// prefix, which PHP loads in directory order. When gpie installs a prebuilt
+// bundled .so it writes the INI itself, so it needs a priority; the docker
+// images' own convention for bundled extensions is to load them early, before
+// third-party extensions (default 60 for those, 90 for zend extensions).
+const bundledIniPriority uint32 = 20
+
+func BundledIniPriority(string) uint32 {
+	return bundledIniPriority
+}
+
+// PhpIniConfDir returns PHP's scanned `conf.d` directory, or false when it
+// cannot be located.
+func PhpIniConfDir() (string, bool) {
+	dir, ok := phpIniDir()
+	if !ok {
+		return "", false
+	}
+	return filepath.Join(dir, "conf.d"), true
 }
 
 func phpIniDir() (string, bool) {

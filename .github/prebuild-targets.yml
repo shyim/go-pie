@@ -80,3 +80,60 @@ extensions:
   # attested binary built from an unofficial republisher would launder that
   # trust into something that looks first-party, so protobuf stays a source
   # build until upstream publishes to Packagist.
+
+# PHP-bundled extensions, built by the `docker-php-ext-*` helpers rather than
+# resolved from Packagist. These have no upstream version: the source IS the PHP
+# source tree, so a cell is keyed on the full PHP PATCH version, read live from
+# docker-library's versions.json. An 8.4.24-built intl.so is not interchangeable
+# with an 8.4.25 one, and phpApi cannot tell them apart (the Zend Module API only
+# changes per minor), so the patch axis is what makes these cells safe.
+#
+# Why cache something that compiles in seconds: natively it is 1-10s, but on an
+# emulated arm64 runner the same build is 22-105s (measured: intl 17s native ->
+# 105s under QEMU, gd 55s, bcmath 39s, sockets 28s, soap 28s, zip 22s). A
+# `gd intl zip soap sockets bcmath` install costs ~4.5 minutes of pure emulation
+# per image build; these cells remove that.
+#
+# Only extensions NOT enabled by default in the official images are listed --
+# caching an already-loaded extension is pointless. Verified to build on both
+# Debian and Alpine at PHP 8.4 unless noted.
+bundled:
+  - name: bcmath
+  - name: bz2
+  - name: calendar
+  - name: dba
+  - name: enchant
+  - name: exif
+  - name: ffi
+  - name: ftp
+  - name: gd
+  - name: gettext
+  - name: gmp
+  - name: intl
+  - name: ldap
+  - name: mysqli
+  - name: opcache
+  - name: pcntl
+  - name: pdo_dblib
+  - name: pdo_mysql
+  - name: pdo_pgsql
+  - name: pgsql
+  - name: shmop
+  - name: snmp
+  - name: soap
+  - name: sockets
+  - name: sysvmsg
+  - name: sysvsem
+  - name: sysvshm
+  - name: tidy
+  - name: xsl
+  - name: zip
+
+  # Debian-only: Alpine has no firebird development package, so configure fails.
+  - name: pdo_firebird
+    bases: [bookworm, trixie]
+
+  # `odbc` and `pdo_odbc` are ABSENT. pdo_odbc needs an explicit
+  # --with-pdo-odbc=unixODBC,/usr (now in docker.configureFlags) and builds, but
+  # plain `odbc` still fails to configure against unixODBC in these images; both
+  # are left out until that is understood rather than shipped half-working.

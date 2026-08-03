@@ -40,6 +40,33 @@ func NewCell(extension, ver string, p *platform.TargetPlatform, d *docker.Distro
 	}
 }
 
+// NewBundledCell builds a cell for a PHP-bundled extension (gd, intl, zip, …)
+// built by the `docker-php-ext-*` helpers.
+//
+// Bundled extensions are compiled from the PHP source tree, so most of them
+// carry no version of their own: `intl` and `gd` have no PHP_*_VERSION at all,
+// and the sources ship with (and are only valid for) one exact PHP release.
+// Both the version and the PHP axis therefore use the full patch version, not
+// major.minor: an `intl.so` built against 8.4.24 is not interchangeable with
+// one built against 8.4.25, and `phpApi` cannot tell them apart because the
+// Zend Module API only changes per minor.
+//
+// Third-party extensions keep the major.minor PHP axis (see NewCell): they have
+// a real upstream version and are ABI-stable across a minor's patches.
+func NewBundledCell(extension string, p *platform.TargetPlatform, d *docker.Distro, configureOptions []string) Cell {
+	full := p.PHP.Version.String()
+	return Cell{
+		Extension:    strings.ToLower(extension),
+		Version:      full,
+		PHP:          full,
+		Distro:       d.Label(),
+		Arch:         archToken(p.Architecture),
+		ThreadSafety: p.ThreadSafety,
+		Debug:        p.PHP.DebugBuild,
+		ConfigHash:   configHash(configureOptions),
+	}
+}
+
 // TSToken returns "nts" / "zts".
 func (c *Cell) TSToken() string {
 	return c.ThreadSafety.Token()
