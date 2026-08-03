@@ -1,0 +1,119 @@
+name: Publish image
+
+# Publishes the `gpie` binary as a scratch-based OCI image so it can be pulled
+# into any PHP image with a single layer copy:
+#
+#   COPY --from=ghcr.io/shyim/gpie /gpie /usr/local/bin/gpie
+#
+# The README already documents that usage, so main must always have a matching
+# `:latest` published.
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+# A newer commit on main supersedes an in-flight publish of an older one, and a
+# PR only ever builds to validate the Dockerfile. Neither is worth finishing.
+concurrency:
+  group: publish-image-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE: ${{ github.repository_owner }}/gpie
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write # push to GHCR
+      id-token: write # build attestation
+      attestations: write
+    steps:
+      - uses: actions/checkout@v4
+
+      # QEMU is deliberately NOT installed: the Dockerfile pins its build stage
+      # to $BUILDPLATFORM and cross-compiles with GOARCH, so arm64 is produced
+      # natively on an amd64 runner. Emulating the Go toolchain would be far
+      # slower for an identical result.
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      # A pull request from a fork has no write access to GHCR, and we do not
+      # want to publish from unreviewed code in any case, so PRs build only.
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Derives tags and the per-build OCI labels (revision, created, version)
+      # rather than hardcoding them in the Dockerfile, where they would bust the
+      # layer cache on every commit.
+      - name: Compute tags and labels
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,format=long,prefix=,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=ref,event=pr
+          labels: |
+            org.opencontainers.image.title=gpie
+            org.opencontainers.image.description=PHP Installer for Extensions (PIE), as a single static binary to COPY into PHP images
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          annotations: ${{ steps.meta.outputs.annotations }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # Reproducible timestamps: without this every layer is stamped with
+          # the build time, so an unchanged source tree still yields a new digest.
+          provenance: false
+          sbom: false
+
+      # Prove the published image really does contain a working binary for both
+      # architectures before anyone COPYs it. A scratch image cannot be tested
+      # with `docker run` on the wrong arch, so each is checked on its own.
+      - name: Verify the image is usable via COPY --from
+        if: github.event_name != 'pull_request'
+        env:
+          REF: ${{ env.REGISTRY }}/${{ env.IMAGE }}@${{ steps.build.outputs.digest }}
+        run: |
+          for arch in amd64 arm64; do
+            echo "::group::$arch"
+            # Build a throwaway image the way a user would, then run gpie in it.
+            printf 'FROM php:8.4-cli\nCOPY --from=%s /gpie /usr/local/bin/gpie\n' "$REF" \
+              | docker buildx build --platform "linux/$arch" --load -t "gpie-verify:$arch" -f - .
+            docker run --rm --platform "linux/$arch" "gpie-verify:$arch" gpie --version
+            echo "::endgroup::"
+          done
+
+      # Attest the pushed manifest so consumers can verify provenance the same
+      # way they can for the prebuilt extension artifacts.
+      - name: Attest build provenance
+        if: github.event_name != 'pull_request'
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
