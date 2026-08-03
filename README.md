@@ -110,6 +110,19 @@ RUN gpie install \
 `--cleanup-build-deps` removes build-only packages after a successful build,
 keeping the resulting image layer smaller.
 
+The image is a `scratch` image holding just the static binary and a CA bundle,
+built for `linux/amd64` and `linux/arm64`, so `COPY --from` resolves to the
+right architecture automatically. Available tags:
+
+| Tag | Points at |
+| --- | --- |
+| `latest` | the current `main` |
+| `<full-sha>` | one specific commit — pin this for reproducible builds |
+| `1.2.3`, `1.2` | a released version, once tags exist |
+
+Pin the commit SHA when a build must stay reproducible; `latest` moves with
+every push to `main`.
+
 ### Prebuilt OCI artifacts
 
 For matching targets, `gpie` can download an OCI-hosted prebuilt `.so`
