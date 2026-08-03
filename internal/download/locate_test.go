@@ -34,16 +34,41 @@ func TestLocateSourceDirSingleSubdirWithConfig(t *testing.T) {
 }
 
 func TestLocateSourceDirNested(t *testing.T) {
-	// Rust's find_config_m4 returns the config.m4 file path itself (not its dir);
-	// port that faithfully.
+	// locateSourceDir must return a DIRECTORY: it becomes phpize's working
+	// directory. Returning the config.m4 path itself (which findConfigM4 hands
+	// back) made every mongodb cell in the nightly fail with
+	// "fork/exec /usr/local/bin/phpize: not a directory".
 	root := t.TempDir()
 	mkfile(t, filepath.Join(root, "top", "src", "config.m4"), "AC_INIT")
 	got, err := locateSourceDir(root, testPkg())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if filepath.Base(got) != "config.m4" || filepath.Base(filepath.Dir(got)) != "src" {
-		t.Fatalf("got %q", got)
+	if filepath.Base(got) != "src" {
+		t.Fatalf("got %q, want the directory holding config.m4", got)
+	}
+	if info, err := os.Stat(got); err != nil || !info.IsDir() {
+		t.Fatalf("locateSourceDir returned %q which is not a directory", got)
+	}
+}
+
+// A PECL tarball unpacks to `package.xml` + `<ext>-<version>/`, so the archive
+// root has two entries and singleSubdir declines -- the exact shape that broke
+// mongodb/mongodb-extension.
+func TestLocateSourceDirPeclTarballLayout(t *testing.T) {
+	root := t.TempDir()
+	mkfile(t, filepath.Join(root, "package.xml"), "<package/>")
+	mkfile(t, filepath.Join(root, "mongodb-2.3.3", "config.m4"), "AC_INIT")
+
+	got, err := locateSourceDir(root, testPkg())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Base(got) != "mongodb-2.3.3" {
+		t.Fatalf("got %q, want the mongodb-2.3.3 source directory", got)
+	}
+	if info, err := os.Stat(got); err != nil || !info.IsDir() {
+		t.Fatalf("locateSourceDir returned %q which is not a directory", got)
 	}
 }
 
