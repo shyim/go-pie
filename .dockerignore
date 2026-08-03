@@ -1,0 +1,25 @@
+# Keep the build context to just the Go sources. Anything listed here would
+# otherwise land in an intermediate build layer and the build cache.
+.git
+.github
+.gitignore
+.golangci.yml
+Dockerfile
+.dockerignore
+
+# Build outputs (see .gitignore).
+gpie
+gpie.exe
+gpie-glibc
+gpie-musl
+
+# Local environment and editor state.
+.env
+.env.*
+*.swp
+.DS_Store
+
+# Not needed to compile the binary.
+tests/docker
+scripts
+README.md

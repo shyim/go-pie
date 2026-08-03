@@ -1,0 +1,107 @@
+# This project deliberately starts from golangci-lint's complete linter set.
+# The exclusions below are rules that either require a policy this CLI does not
+# have (for example an import allow-list), overlap with another enabled rule,
+# or impose a repository-wide formatting/style convention.  Correctness,
+# security, and resource-lifetime checks remain enabled.
+version: "2"
+
+linters:
+  default: all
+  settings:
+    # Keep complexity checks for genuinely difficult control flow, without
+    # flagging the command's small platform-dispatch functions.
+    cyclop:
+      max-complexity: 30
+
+    # Internal packages intentionally use short domain names and expose types
+    # across package boundaries. API documentation is maintained in the user
+    # documentation rather than duplicated on each internal identifier.
+    revive:
+      rules:
+        - name: exported
+          disabled: true
+        - name: package-comments
+          disabled: true
+        - name: unused-parameter
+          disabled: true
+        - name: var-naming
+          disabled: true
+
+    # These findings are reviewed at their call sites. The application needs
+    # executable artifacts, CLI subprocesses, and user-selected paths. Rules
+    # that can be scoped to the few files that genuinely need them are handled
+    # under `exclusions` instead, so a new violation elsewhere still fails.
+    gosec:
+      excludes:
+        - G204 # intentional subprocess execution by this CLI
+        - G301 # filesystem modes for installed configuration directories
+        - G302 # intentionally executable installed artifacts
+        - G304 # validated/user-selected artifact and configuration paths
+        - G306 # executable test fixtures and shell scripts
+
+  disable:
+    # These require a project-specific policy, rather than detecting bugs.
+    - depguard
+    - forbidigo
+    # gomodguard is the deprecated alias of gomodguard_v2; name both so a
+    # `default: all` run stays warning-free.
+    - gomodguard
+    - gomodguard_v2
+    - importas
+
+    # Declaration order, function size, and naming are maintained through
+    # review; enforcing them mechanically would require a broad rewrite.
+    - funcorder
+    - funlen
+    - gochecknoglobals
+    - gocognit
+    - varnamelen
+
+    # These are formatting/style alternatives with conflicting or highly
+    # prescriptive whitespace and error-handling conventions.
+    - lll
+    - nlreturn
+    - noinlineerr
+    # wsl is the deprecated alias of wsl_v5; both must be named to stay quiet.
+    - wsl
+    - wsl_v5
+
+    # These favour large-scale API/style rewrites over actionable defects in a
+    # small command-line application.
+    - err113
+    - exhaustruct
+    - goconst
+    - mnd
+    - nestif
+    - paralleltest
+    - testpackage
+    - wrapcheck
+
+  exclusions:
+    rules:
+      # These JSON names are external wire-format contracts and must remain
+      # snake_case even though Go field names use their idiomatic spelling.
+      - linters:
+          - tagliatelle
+        text: "got '(build_only|bundle_url)' want"
+
+      # Packagist publishes dist checksums as SHA-1, so verifying them requires
+      # the weak primitive. Scoped to the verifier: a new SHA-1 use anywhere
+      # else in the tree is still reported.
+      - path: 'internal/download/verify(_test)?\.go'
+        linters:
+          - gosec
+        text: 'G(401|505)'
+
+      # A table of registry hosts and expected values, not credentials.
+      - path: 'internal/oci/registry_test\.go'
+        linters:
+          - gosec
+        text: 'G101'
+
+      # os.WriteFile target is built by copyContents from an already-validated
+      # destination path; gosec's taint analysis cannot see the validation.
+      - path: 'internal/install/mod\.go'
+        linters:
+          - gosec
+        text: 'G703'

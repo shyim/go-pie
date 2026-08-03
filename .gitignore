@@ -1,0 +1,10 @@
+# Build outputs. CI and the tests/docker harness build these into the repo
+# root; none of them belong in version control.
+/gpie
+/gpie.exe
+/gpie-glibc
+/gpie-musl
+*.swp
+
+# Python bytecode from scripts/.
+__pycache__/

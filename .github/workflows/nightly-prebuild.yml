@@ -1,0 +1,179 @@
+name: Nightly prebuild
+
+# Builds a matrix of PHP extensions inside official php images, pushes each
+# compiled .so + gpie manifest to GHCR as a per-cell OCI artifact, then
+# aggregates the cells of each ext@version into a single OCI image index.
+# `gpie install --prefer-prebuilt` reads that index and downloads instead of
+# compiling.
+
+on:
+  schedule:
+    - cron: "0 3 * * *" # nightly at 03:00 UTC
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  packages: write # push to GHCR
+  id-token: write # build attestations
+  attestations: write
+
+# The index job snapshots live registry tags, so two overlapping runs could
+# interleave cell pushes and publish a mixed index. Queue runs instead of
+# cancelling: a cancelled run would leave cells pushed but never indexed.
+concurrency:
+  group: nightly-prebuild-${{ github.repository }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  NAMESPACE: ${{ github.repository_owner }}/gpie-ext
+
+jobs:
+  # ---- Build one cell per matrix entry, push a per-cell tag ------------------
+  build:
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        # ext_name is the PHP extension name (repo); package is the Packagist
+        # source. Add rows to widen coverage.
+        include:
+          - ext_name: redis
+            package: phpredis/phpredis
+            version: "6.3.0"
+            php: "8.4"
+            distro: "debian@12"
+            image: "php:8.4-cli"
+            arch: x86_64
+            runner: ubuntu-latest
+          - ext_name: redis
+            package: phpredis/phpredis
+            version: "6.3.0"
+            php: "8.4"
+            distro: "debian@12"
+            image: "php:8.4-cli"
+            arch: aarch64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: true
+      - run: go build -o gpie .
+
+      # Build the extension inside the exact target image and emit OCI files.
+      # package/version are matrix-controlled (trusted), but we still pass them
+      # via env + argv (never interpolated into a shell string).
+      - name: Emit prebuilt artifact
+        env:
+          PKG: ${{ matrix.package }}
+          VER: ${{ matrix.version }}
+          IMAGE: ${{ matrix.image }}
+        run: |
+          mkdir -p out
+          docker run --rm -e PKG -e VER -e GITHUB_REPOSITORY \
+            -v "$PWD/gpie":/usr/local/bin/gpie \
+            -v "$PWD/out":/out \
+            "$IMAGE" \
+            gpie build "$PKG:$VER" --install-system-deps --emit-oci /out
+          # cell.txt is produced inside the container, so validate it against a
+          # strict charset before it becomes an environment value and, later, an
+          # OCI tag. A single well-formed line also removes any heredoc concern.
+          CELL_RAW="$(tr -d '\r' < out/cell.txt | head -n 1)"
+          if ! printf '%s' "$CELL_RAW" | grep -Eq '^[A-Za-z0-9._@/+-]{1,200}$'; then
+            echo "refusing malformed cell identity from out/cell.txt: $CELL_RAW" >&2
+            exit 1
+          fi
+          echo "CELL=$CELL_RAW" >> "$GITHUB_ENV"
+          ls -la out
+
+      - uses: oras-project/setup-oras@22ce207df3b08e061f537244349aac6ae1d214f6 # v1
+      - name: Log in to GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTOR: ${{ github.actor }}
+        run: echo "$GHCR_TOKEN" | oras login "$REGISTRY" -u "$ACTOR" --password-stdin
+
+      # Push this cell to a unique per-cell tag. The `sh.gpie.cell` annotation is
+      # written on the image manifest; the client reads it from there (the index
+      # descriptor does not carry it — see the index step's note).
+      - name: Push cell artifact
+        id: push
+        env:
+          EXT_NAME: ${{ matrix.ext_name }}
+          VER: ${{ matrix.version }}
+          PHP: ${{ matrix.php }}
+          DISTRO: ${{ matrix.distro }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          REPO="$REGISTRY/$NAMESPACE/$EXT_NAME"
+          # A filesystem-safe per-cell tag suffix.
+          SUFFIX="$(printf '%s' "$CELL" | tr '/@' '__')"
+          CELL_TAG="$VER-$SUFFIX"
+          digest="$(oras push "$REPO:$CELL_TAG" \
+            --format go-template='{{.digest}}' \
+            --artifact-type application/vnd.gpie.ext.config.v1+json \
+            --config out/config.json:application/vnd.gpie.ext.config.v1+json \
+            --annotation "sh.gpie.cell=$CELL" \
+            --annotation "sh.gpie.php=$PHP" \
+            --annotation "sh.gpie.distro=$DISTRO" \
+            --annotation "sh.gpie.arch=$ARCH" \
+            "out/layer.tar.gz:application/vnd.gpie.ext.layer.v1.tar+gzip")"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "repo=$REPO" >> "$GITHUB_OUTPUT"
+          echo "Pushed $REPO:$CELL_TAG @ $digest (cell $CELL)"
+
+      # Attest the exact pushed manifest digest so `gpie install --verify attest`
+      # can verify this artifact natively (no gh CLI on the client).
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-name: ${{ steps.push.outputs.repo }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+
+  # ---- Aggregate all cells of each ext@version into one image index ---------
+  index:
+    needs: build
+    # `fail-fast: false` lets individual cells fail, but a matrix job with any
+    # failed cell is itself failed, which would skip indexing and waste every
+    # cell that did succeed. Run whenever the workflow was not cancelled; the
+    # step below still fails if no cell tags exist at all.
+    if: ${{ always() && !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      matrix:
+        include:
+          - ext_name: redis
+            version: "6.3.0"
+    steps:
+      - uses: oras-project/setup-oras@22ce207df3b08e061f537244349aac6ae1d214f6 # v1
+      - name: Log in to GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTOR: ${{ github.actor }}
+        run: echo "$GHCR_TOKEN" | oras login "$REGISTRY" -u "$ACTOR" --password-stdin
+
+      # Discover this version's per-cell tags and merge them into `ext:version`.
+      # NOTE: `oras manifest index create` does NOT copy each child manifest's
+      # `sh.gpie.cell` annotation onto the index descriptor (verified against a
+      # real registry). The gpie client handles that: when a descriptor lacks
+      # the annotation it fetches the child manifest and reads the cell there.
+      # Requires oras >= 1.3 (the `manifest index` subcommand).
+      - name: Create/refresh version index
+        env:
+          EXT_NAME: ${{ matrix.ext_name }}
+          VER: ${{ matrix.version }}
+        run: |
+          REPO="$REGISTRY/$NAMESPACE/$EXT_NAME"
+          # All per-cell tags for this version look like `<ver>-<suffix>`.
+          mapfile -t TAGS < <(oras repo tags "$REPO" | grep -E "^${VER}-" || true)
+          if [ "${#TAGS[@]}" -eq 0 ]; then
+            echo "no cell tags for $REPO:$VER; nothing to index" >&2
+            exit 1
+          fi
+          echo "Indexing ${#TAGS[@]} cell(s) into $REPO:$VER"
+          oras manifest index create "$REPO:$VER" "${TAGS[@]}"
