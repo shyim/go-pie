@@ -5,11 +5,24 @@ name: Nightly prebuild
 # aggregates the cells of each ext@version into a single OCI image index.
 # `gpie install --prefer-prebuilt` reads that index and downloads instead of
 # compiling.
+#
+# The matrix is generated, not hand-written: `scripts/gen-prebuild-matrix.py`
+# expands `.github/prebuild-targets.yml` against Packagist. See
+# docs/prebuilt-oci.md for the axes and why SAPI is not one of them.
 
 on:
   schedule:
     - cron: "0 3 * * *" # nightly at 03:00 UTC
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      shards:
+        description: "Number of build shards to split the matrix across"
+        required: false
+        default: "8"
+      only:
+        description: "Build only this extension (ext_name), empty for all"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -29,126 +42,72 @@ env:
   NAMESPACE: ${{ github.repository_owner }}/gpie-ext
 
 jobs:
-  # ---- Build one cell per matrix entry, push a per-cell tag ------------------
+  # ---- Expand the declarative targets into shard matrices -------------------
+  # GitHub caps a matrix at 256 jobs, and the full product is larger than that,
+  # so the matrix is split into shards that each run as their own matrix job.
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      shards: ${{ steps.plan.outputs.shards }}
+      index: ${{ steps.plan.outputs.index }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Plan matrix
+        id: plan
+        env:
+          SHARDS: ${{ inputs.shards || '8' }}
+          ONLY: ${{ inputs.only }}
+        run: |
+          # `only` is a workflow input (untrusted), so it is passed through the
+          # environment and charset-checked rather than interpolated.
+          if [ -n "$ONLY" ] && ! printf '%s' "$ONLY" | grep -Eq '^[a-z0-9_]{1,64}$'; then
+            echo "refusing malformed `only` input: $ONLY" >&2
+            exit 1
+          fi
+          if ! printf '%s' "$SHARDS" | grep -Eq '^[0-9]{1,3}$' || [ "$SHARDS" -lt 1 ]; then
+            echo "refusing malformed `shards` input: $SHARDS" >&2
+            exit 1
+          fi
+          python3 scripts/gen-prebuild-matrix.py --check
+          # A shard list the `build` job fans out over, and the deduplicated
+          # ext+version list the `index` job fans out over.
+          printf 'shards=' >> "$GITHUB_OUTPUT"
+          python3 -c "import json,os;n=int(os.environ['SHARDS']);print(json.dumps([f'{i}/{n}' for i in range(n)]))" >> "$GITHUB_OUTPUT"
+          printf 'index=' >> "$GITHUB_OUTPUT"
+          python3 scripts/gen-prebuild-matrix.py --group-index >> "$GITHUB_OUTPUT"
+
+  # ---- Build every cell of one shard ---------------------------------------
   build:
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 60
+    needs: plan
     strategy:
       fail-fast: false
       matrix:
-        # ext_name is the PHP extension name (repo); package is the Packagist
-        # source. Add rows to widen coverage.
-        include:
-          - ext_name: redis
-            package: phpredis/phpredis
-            version: "6.3.0"
-            php: "8.4"
-            distro: "debian@12"
-            image: "php:8.4-cli"
-            arch: x86_64
-            runner: ubuntu-latest
-          - ext_name: redis
-            package: phpredis/phpredis
-            version: "6.3.0"
-            php: "8.4"
-            distro: "debian@12"
-            image: "php:8.4-cli"
-            arch: aarch64
-            runner: ubuntu-24.04-arm
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.26'
-          cache: true
-      - run: go build -o gpie .
-
-      # Build the extension inside the exact target image and emit OCI files.
-      # package/version are matrix-controlled (trusted), but we still pass them
-      # via env + argv (never interpolated into a shell string).
-      - name: Emit prebuilt artifact
-        env:
-          PKG: ${{ matrix.package }}
-          VER: ${{ matrix.version }}
-          IMAGE: ${{ matrix.image }}
-        run: |
-          mkdir -p out
-          docker run --rm -e PKG -e VER -e GITHUB_REPOSITORY \
-            -v "$PWD/gpie":/usr/local/bin/gpie \
-            -v "$PWD/out":/out \
-            "$IMAGE" \
-            gpie build "$PKG:$VER" --install-system-deps --emit-oci /out
-          # cell.txt is produced inside the container, so validate it against a
-          # strict charset before it becomes an environment value and, later, an
-          # OCI tag. A single well-formed line also removes any heredoc concern.
-          CELL_RAW="$(tr -d '\r' < out/cell.txt | head -n 1)"
-          if ! printf '%s' "$CELL_RAW" | grep -Eq '^[A-Za-z0-9._@/+-]{1,200}$'; then
-            echo "refusing malformed cell identity from out/cell.txt: $CELL_RAW" >&2
-            exit 1
-          fi
-          echo "CELL=$CELL_RAW" >> "$GITHUB_ENV"
-          ls -la out
-
-      - uses: oras-project/setup-oras@22ce207df3b08e061f537244349aac6ae1d214f6 # v1
-      - name: Log in to GHCR
-        env:
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          ACTOR: ${{ github.actor }}
-        run: echo "$GHCR_TOKEN" | oras login "$REGISTRY" -u "$ACTOR" --password-stdin
-
-      # Push this cell to a unique per-cell tag. The `sh.gpie.cell` annotation is
-      # written on the image manifest; the client reads it from there (the index
-      # descriptor does not carry it — see the index step's note).
-      - name: Push cell artifact
-        id: push
-        env:
-          EXT_NAME: ${{ matrix.ext_name }}
-          VER: ${{ matrix.version }}
-          PHP: ${{ matrix.php }}
-          DISTRO: ${{ matrix.distro }}
-          ARCH: ${{ matrix.arch }}
-        run: |
-          REPO="$REGISTRY/$NAMESPACE/$EXT_NAME"
-          # A filesystem-safe per-cell tag suffix.
-          SUFFIX="$(printf '%s' "$CELL" | tr '/@' '__')"
-          CELL_TAG="$VER-$SUFFIX"
-          digest="$(oras push "$REPO:$CELL_TAG" \
-            --format go-template='{{.digest}}' \
-            --artifact-type application/vnd.gpie.ext.config.v1+json \
-            --config out/config.json:application/vnd.gpie.ext.config.v1+json \
-            --annotation "sh.gpie.cell=$CELL" \
-            --annotation "sh.gpie.php=$PHP" \
-            --annotation "sh.gpie.distro=$DISTRO" \
-            --annotation "sh.gpie.arch=$ARCH" \
-            "out/layer.tar.gz:application/vnd.gpie.ext.layer.v1.tar+gzip")"
-          echo "digest=$digest" >> "$GITHUB_OUTPUT"
-          echo "repo=$REPO" >> "$GITHUB_OUTPUT"
-          echo "Pushed $REPO:$CELL_TAG @ $digest (cell $CELL)"
-
-      # Attest the exact pushed manifest digest so `gpie install --verify attest`
-      # can verify this artifact natively (no gh CLI on the client).
-      - name: Attest build provenance
-        uses: actions/attest-build-provenance@v1
-        with:
-          subject-name: ${{ steps.push.outputs.repo }}
-          subject-digest: ${{ steps.push.outputs.digest }}
-          push-to-registry: true
+        shard: ${{ fromJSON(needs.plan.outputs.shards) }}
+    uses: ./.github/workflows/prebuild-shard.yml
+    with:
+      shard: ${{ matrix.shard }}
+      only: ${{ inputs.only }}
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
 
   # ---- Aggregate all cells of each ext@version into one image index ---------
   index:
-    needs: build
+    needs: [plan, build]
     # `fail-fast: false` lets individual cells fail, but a matrix job with any
     # failed cell is itself failed, which would skip indexing and waste every
     # cell that did succeed. Run whenever the workflow was not cancelled; the
-    # step below still fails if no cell tags exist at all.
+    # step below still skips an ext@version with no cell tags at all.
     if: ${{ always() && !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
-      matrix:
-        include:
-          - ext_name: redis
-            version: "6.3.0"
+      fail-fast: false
+      max-parallel: 4
+      matrix: ${{ fromJSON(needs.plan.outputs.index) }}
     steps:
       - uses: oras-project/setup-oras@22ce207df3b08e061f537244349aac6ae1d214f6 # v1
       - name: Log in to GHCR
@@ -158,10 +117,14 @@ jobs:
         run: echo "$GHCR_TOKEN" | oras login "$REGISTRY" -u "$ACTOR" --password-stdin
 
       # Discover this version's per-cell tags and merge them into `ext:version`.
-      # NOTE: `oras manifest index create` does NOT copy each child manifest's
-      # `sh.gpie.cell` annotation onto the index descriptor (verified against a
-      # real registry). The gpie client handles that: when a descriptor lacks
-      # the annotation it fetches the child manifest and reads the cell there.
+      #
+      # Each child is added with `--annotation`, so the cell id lands on the
+      # INDEX DESCRIPTOR as well as on the child manifest. That matters at this
+      # scale: gpie's ResolvePrebuilt scans descriptors in order and, for any
+      # descriptor lacking the annotation, fetches the child manifest to read
+      # it. With hundreds of cells per version an unannotated index turns one
+      # lookup into hundreds of serial round-trips. Annotated descriptors keep
+      # a hit (and a miss) to a single GET of the index.
       # Requires oras >= 1.3 (the `manifest index` subcommand).
       - name: Create/refresh version index
         env:
@@ -169,11 +132,52 @@ jobs:
           VER: ${{ matrix.version }}
         run: |
           REPO="$REGISTRY/$NAMESPACE/$EXT_NAME"
-          # All per-cell tags for this version look like `<ver>-<suffix>`.
-          mapfile -t TAGS < <(oras repo tags "$REPO" | grep -E "^${VER}-" || true)
+          # All per-cell tags for this version look like `<ver>-<suffix>`. Anchor
+          # on the full version segment so 6.2.0 does not also match 6.2.0RC1.
+          mapfile -t TAGS < <(oras repo tags "$REPO" 2>/dev/null | grep -E "^${VER}-" || true)
           if [ "${#TAGS[@]}" -eq 0 ]; then
-            echo "no cell tags for $REPO:$VER; nothing to index" >&2
-            exit 1
+            echo "::warning::no cell tags for $REPO:$VER; nothing to index"
+            exit 0
           fi
           echo "Indexing ${#TAGS[@]} cell(s) into $REPO:$VER"
-          oras manifest index create "$REPO:$VER" "${TAGS[@]}"
+
+          ARGS=()
+          for tag in "${TAGS[@]}"; do
+            # Read each child's own cell annotation and copy it onto the
+            # descriptor we are about to write.
+            cell="$(oras manifest fetch "$REPO:$tag" \
+              --format go-template='{{index .annotations "sh.gpie.cell"}}')"
+            if ! printf '%s' "$cell" | grep -Eq '^[A-Za-z0-9._@/+-]{1,200}$'; then
+              echo "::warning::skipping $tag: missing or malformed sh.gpie.cell ($cell)"
+              continue
+            fi
+            ARGS+=("--annotation" "sh.gpie.cell=$cell" "$tag")
+          done
+          if [ "${#ARGS[@]}" -eq 0 ]; then
+            echo "::warning::no annotatable cells for $REPO:$VER; nothing to index"
+            exit 0
+          fi
+          oras manifest index create "$REPO:$VER" "${ARGS[@]}"
+
+  # ---- Fail the run if too little of the matrix succeeded -------------------
+  # Individual cell failures are expected and tolerated, but a run where most
+  # cells failed means something systemic broke and should not pass silently.
+  verify:
+    needs: [build, index]
+    if: ${{ always() && !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check shard outcomes
+        env:
+          BUILD_RESULT: ${{ needs.build.result }}
+          INDEX_RESULT: ${{ needs.index.result }}
+        run: |
+          echo "build=$BUILD_RESULT index=$INDEX_RESULT"
+          if [ "$INDEX_RESULT" = "failure" ]; then
+            echo "indexing failed; published cells may not be reachable" >&2
+            exit 1
+          fi
+          if [ "$BUILD_RESULT" = "failure" ]; then
+            echo "::warning::at least one build shard reported failures; see the shard logs for the per-cell summary"
+          fi

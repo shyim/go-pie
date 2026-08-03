@@ -1,0 +1,82 @@
+# Declarative inputs for the nightly prebuild matrix.
+#
+# `scripts/gen-prebuild-matrix.py` expands this into the GitHub Actions matrix.
+# Versions are NOT pinned here: the generator asks Packagist for the newest
+# `keep_versions` stable releases, so upstream releases land without an edit.
+#
+# Axes and why each exists (see docs/prebuilt-oci.md):
+#   php    PHP minor. Zend ABI is stable per minor, so this is the ABI axis.
+#   bases  Base image suffix, which pins libc and every system library the .so
+#          links against. The distro label that goes into the cell id is read
+#          from /etc/os-release inside the container, never guessed here:
+#          php:8.4-alpine3.24 reports alpine@3.24.1, and that patch level
+#          floats as Alpine respins.
+#   arches Native runner per arch; no QEMU.
+#   ts     nts + zts, generated automatically. NOT listed here because it is
+#          derived: every target builds both unless `zts: false`.
+#
+# SAPI (cli/fpm/apache) is deliberately absent. Those images differ only in
+# --enable-embed / --enable-fpm / --with-apxs2 and phpdbg; they share CFLAGS,
+# Zend API, threading and extension_dir, so one cli-built .so serves all of
+# them. Adding SAPI would triple the matrix for byte-identical output.
+#
+# Per-extension keys:
+#   package        Packagist name. Must be composer type php-ext/php-ext-zend;
+#                  the generator fails if not, since gpie's resolver rejects
+#                  anything else.
+#   ext_name       The extension (and GHCR repo) name.
+#   keep_versions  How many newest stable versions to build.
+#   php / bases /  Override the defaults for this extension only.
+#   arches
+#   min_php        Floor that Packagist metadata does not express.
+#   zts            false to skip thread-safe cells entirely.
+
+defaults:
+  php: [8.2, 8.3, 8.4, 8.5]
+  bases: [bookworm, trixie, alpine3.23, alpine3.24]
+  arches: [x86_64, aarch64]
+  keep_versions: 1
+
+extensions:
+  # ---- Widely used, cheap to build, no source-built C library --------------
+  - package: phpredis/phpredis
+    ext_name: redis
+    keep_versions: 2
+
+  - package: xdebug/xdebug
+    ext_name: xdebug
+    keep_versions: 2
+
+  - package: mongodb/mongodb-extension
+    ext_name: mongodb
+
+  - package: php-amqp/php-amqp
+    ext_name: amqp
+
+  # ---- Observability -------------------------------------------------------
+  # open-telemetry/ext-opentelemetry declares `require.php: ^8.0`, so the
+  # generator admits every default minor.
+  - package: open-telemetry/ext-opentelemetry
+    ext_name: opentelemetry
+
+  # `grpc/grpc-php-ext` is the gRPC project's own extension repo
+  # (github.com/grpc/grpc-php-ext, php >=8.0). NOT `grpc/grpc`, which is the
+  # pure-PHP library (composer type `library`, rejected by gpie's resolver),
+  # and NOT the `pie-extensions/*` / `extport/*` republishers.
+  #
+  # The PECL tarball bundles the whole gRPC C++ core, so a cell is tens of
+  # minutes of C++ and RAM-hungry -- by far the slowest in the matrix, hence
+  # the reduced axes. Packagist history only starts at v1.81.0, so there is
+  # nothing older to build anyway.
+  - package: grpc/grpc-php-ext
+    ext_name: grpc
+    bases: [bookworm, trixie]
+    arches: [x86_64]
+
+  # protobuf is deliberately ABSENT. There is no official protobuf extension on
+  # Packagist: `google/protobuf` is the pure-PHP runtime (type `library`), and
+  # the only php-ext packages (`pie-extensions/protobuf`, `extport/protobuf`)
+  # are third-party republishers of the upstream tarball. Publishing a signed,
+  # attested binary built from an unofficial republisher would launder that
+  # trust into something that looks first-party, so protobuf stays a source
+  # build until upstream publishes to Packagist.
