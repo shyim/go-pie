@@ -1,11 +1,14 @@
 package oci
 
 import (
+	"context"
 	"encoding/base64"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -135,4 +138,63 @@ func TestReadRegistryBodyRejectsOversizedResponse(t *testing.T) {
 	if _, err := readRegistryBody(strings.NewReader("12345"), 4); err == nil {
 		t.Fatal("expected registry response size rejection")
 	}
+}
+
+// A resolve issues four requests (index, manifest, config blob, layer blob) and
+// each used to redo the token dance -- measured at ~730ms of redundant auth per
+// cache hit, against ~815ms of actual content transfer.
+func TestPullTokenIsFetchedOncePerRepo(t *testing.T) {
+	var tokenRequests atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/token") {
+			tokenRequests.Add(1)
+			_, _ = w.Write([]byte(`{"token":"t"}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	// `insecure` skips the token dance entirely, and a loopback host would set
+	// it, so drive the caching path directly instead.
+	r := &Registry{
+		Host:       strings.TrimPrefix(srv.URL, "http://"),
+		Namespace:  "ns",
+		insecure:   false,
+		pullTokens: make(map[string]string),
+	}
+	// tokenHost() builds an https:// URL; point the client at the test server.
+	restore := httpClient
+	httpClient = srv.Client()
+	httpClient.Transport = rewriteToTestServer{srv.URL}
+	defer func() { httpClient = restore }()
+
+	for range 4 {
+		r.pullToken(context.Background(), "ns/redis")
+	}
+	if got := tokenRequests.Load(); got != 1 {
+		t.Errorf("token fetched %d times for one repo, want 1", got)
+	}
+
+	// A different repository needs its own scoped token.
+	r.pullToken(context.Background(), "ns/xdebug")
+	if got := tokenRequests.Load(); got != 2 {
+		t.Errorf("token fetched %d times for two repos, want 2", got)
+	}
+}
+
+// rewriteToTestServer sends every request to the httptest server regardless of
+// the scheme/host the code under test built, so the https-only token URL can be
+// exercised without TLS.
+type rewriteToTestServer struct{ base string }
+
+func (t rewriteToTestServer) RoundTrip(req *http.Request) (*http.Response, error) {
+	u, err := url.Parse(t.base)
+	if err != nil {
+		return nil, err
+	}
+	req = req.Clone(req.Context())
+	req.URL.Scheme = u.Scheme
+	req.URL.Host = u.Host
+	return http.DefaultTransport.RoundTrip(req)
 }

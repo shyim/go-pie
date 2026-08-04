@@ -235,6 +235,12 @@ func RunInstall(ctx context.Context, args *InstallArgs, mode Mode) error {
 		}
 	}
 
+	// Consult the prebuilt cache BEFORE provisioning: a hit needs no compiler
+	// toolchain and no -dev packages, only the runtime libraries its .so links
+	// against. Provisioning first meant an all-hit install still installed (and
+	// then purged) a full build environment it never used.
+	resolvePrebuilts(ctx, targets, plat, args, mode, os.Stdout)
+
 	cleanup := provisionSystemDeps(ctx, targets, args)
 
 	wantParallel := args.Jobs > 1 && mode == ModeInstall
@@ -258,9 +264,9 @@ func RunInstall(ctx context.Context, args *InstallArgs, mode Mode) error {
 		}
 		var err error
 		if t.isBundled {
-			err = installBundled(ctx, t.bundled, plat, args, mode, os.Stdout)
+			err = installBundled(ctx, t.bundled, plat, args, mode, t.prebuilt, os.Stdout)
 		} else {
-			err = buildAndInstallInner(ctx, t.pkg, plat, args, mode, plat.MakeParallelJobs, os.Stdout, false)
+			err = buildAndInstallInner(ctx, t.pkg, plat, args, mode, plat.MakeParallelJobs, os.Stdout, false, t.prebuilt)
 		}
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "%s %s: %v\n", se.Red("failed:"), t.label(), err)
@@ -320,6 +326,76 @@ type Target struct {
 	isBundled bool
 	pkg       *resolver.ResolvedPackage
 	bundled   string
+
+	// Set when the prebuilt cache was consulted up front and produced a hit.
+	// A hit needs no compiler toolchain, so it changes which system packages
+	// provisionSystemDeps has to install.
+	prebuilt *oci.Prebuilt
+	cell     string
+}
+
+// resolvePrebuilts looks every target up in the prebuilt cache before anything
+// is installed, so provisionSystemDeps knows which targets still need a
+// compiler toolchain.
+//
+// Lookups run concurrently: each is four HTTPS round-trips that do not touch
+// the filesystem or the package manager, so resolving them one at a time just
+// serialises latency. The cost is bounded by the number of extensions asked for.
+//
+// A miss or an error is not fatal -- both simply leave `prebuilt` nil and the
+// target takes the normal source path.
+//
+//nolint:errcheck // The caller cannot usefully recover from presentation output failures.
+func resolvePrebuilts(ctx context.Context, targets []*Target, plat *platform.TargetPlatform, args *InstallArgs, mode Mode, out io.Writer) {
+	if mode != ModeInstall || args.prebuiltRegistry() == nil {
+		return
+	}
+	distro := docker.DetectDistro()
+	if distro == nil {
+		return
+	}
+	registry, err := oci.ParseRegistry(*args.prebuiltRegistry())
+	if err != nil {
+		return
+	}
+
+	var wg sync.WaitGroup
+	for _, t := range targets {
+		wg.Add(1)
+		go func(t *Target) {
+			defer wg.Done()
+			var cell oci.Cell
+			if t.isBundled {
+				cell = oci.NewBundledCell(t.bundled, plat, distro, docker.BundledConfigureFlags(t.bundled))
+			} else {
+				cell = oci.NewCell(t.pkg.ExtensionName, t.pkg.Version, plat, distro,
+					buildConfigureOptions(t.pkg, args.ConfigureOptions, io.Discard))
+			}
+			t.cell = cell.ID()
+			prebuilt, err := oci.ResolvePrebuilt(ctx, registry, &cell)
+			if err != nil || prebuilt == nil {
+				return
+			}
+			// The Zend Module API is the hard ABI gate; a mismatch means this
+			// artifact cannot be loaded even though the cell matched.
+			if prebuilt.Manifest.PHPAPI != plat.PHP.APIVersion {
+				return
+			}
+			t.prebuilt = prebuilt
+		}(t)
+	}
+	wg.Wait()
+
+	so := style.ForStdout()
+	for _, t := range targets {
+		if t.prebuilt != nil {
+			fmt.Fprintf(out, "%s %s (%d bytes)\n",
+				so.Green("Using prebuilt:"), t.cell, len(t.prebuilt.SoBytes))
+		} else if t.cell != "" {
+			fmt.Fprintf(out, "%s no prebuilt for %s — building from source\n",
+				so.Yellow("cache miss:"), t.cell)
+		}
+	}
 }
 
 func (t *Target) label() string {
@@ -445,6 +521,7 @@ func installBundled(
 	plat *platform.TargetPlatform,
 	args *InstallArgs,
 	mode Mode,
+	prebuilt *oci.Prebuilt,
 	out io.Writer,
 ) error {
 	// `gpie build <bundled> --emit-oci` is how the nightly workflow produces a
@@ -461,12 +538,16 @@ func installBundled(
 
 	// A prebuilt bundled .so skips the docker-php-ext-install compile entirely,
 	// which is the whole point on emulated arm64 where that compile costs
-	// minutes rather than seconds.
-	if ok, err := tryPrebuiltBundled(ctx, name, plat, args, out); err != nil {
-		fmt.Fprintf(out, "%s prebuilt lookup failed, building from source: %v\n",
-			style.ForStdout().Yellow("note:"), err)
-	} else if ok {
-		return nil
+	// minutes rather than seconds. The artifact was already resolved (and its
+	// runtime packages already installed) by resolvePrebuilts, so this only
+	// has to write it out.
+	if prebuilt != nil {
+		if err := installPrebuiltBundled(ctx, name, plat, args, prebuilt, out); err != nil {
+			fmt.Fprintf(out, "%s installing prebuilt failed, building from source: %v\n",
+				style.ForStdout().Yellow("note:"), err)
+		} else {
+			return nil
+		}
 	}
 
 	ini, err := docker.InstallBundled(ctx, name, plat.MakeParallelJobs)
@@ -484,97 +565,49 @@ func installBundled(
 	return nil
 }
 
-// tryPrebuiltBundled is the bundled-extension counterpart of tryPrebuilt. It
-// keys on the bundled cell (full PHP patch version) and, on a hit, installs the
-// .so and writes the enabling INI without invoking phpize/make.
+// installPrebuiltBundled writes an already-resolved prebuilt bundled extension
+// into place and enables it. Resolution, ABI checking and runtime-package
+// installation all happen earlier (resolvePrebuilts + provisionSystemDeps), so
+// this is only the filesystem half.
 //
 //nolint:errcheck // The caller cannot usefully recover from presentation output failures.
-func tryPrebuiltBundled(
+func installPrebuiltBundled(
 	ctx context.Context,
 	name string,
 	plat *platform.TargetPlatform,
 	args *InstallArgs,
+	prebuilt *oci.Prebuilt,
 	out io.Writer,
-) (bool, error) {
-	registryStr := args.prebuiltRegistry()
-	if registryStr == nil {
-		return false, nil
-	}
-	distro := docker.DetectDistro()
-	if distro == nil {
-		return false, nil
-	}
-
-	configureOptions := docker.BundledConfigureFlags(name)
-	cell := oci.NewBundledCell(name, plat, distro, configureOptions)
-	registry, err := oci.ParseRegistry(*registryStr)
-	if err != nil {
-		return false, err
-	}
-
-	prebuilt, err := oci.ResolvePrebuilt(ctx, registry, &cell)
-	if err != nil {
-		if errors.Is(err, oci.ErrPrebuiltNotFound) {
-			fmt.Fprintf(out, "%s no prebuilt for %s — building from source\n",
-				style.ForStdout().Yellow("cache miss:"), cell.ID())
-			return false, nil
-		}
-		return false, err
-	}
-
-	if prebuilt.Manifest.PHPAPI != plat.PHP.APIVersion {
-		fmt.Fprintf(out, "%s prebuilt PHP API %s != target %s — building from source\n",
-			style.ForStdout().Yellow("cache miss:"), prebuilt.Manifest.PHPAPI, plat.PHP.APIVersion)
-		return false, nil
-	}
-
+) error {
 	if err := verifyPrebuiltPolicy(ctx, prebuilt, args.Verify.Policy()); err != nil {
-		return false, fmt.Errorf("prebuilt verification policy: %w", err)
-	}
-
-	fmt.Fprintf(out, "%s %s (%d bytes)\n",
-		style.ForStdout().Green("Using prebuilt:"), cell.ID(), len(prebuilt.SoBytes))
-
-	runtime := prebuilt.Manifest.RuntimePackagesFor(distro.FamilyToken())
-	if len(runtime) > 0 {
-		if args.InstallSystemDeps {
-			deps := docker.SystemDeps{Persistent: runtime}
-			if err := docker.InstallSystemDeps(ctx, &deps, distro); err != nil {
-				return false, fmt.Errorf("installing prebuilt runtime packages: %w", err)
-			}
-			fmt.Fprintf(out, "%s runtime packages: %s\n",
-				style.ForStdout().Green("Installed"), strings.Join(runtime, ", "))
-		} else {
-			fmt.Fprintf(out, "%s prebuilt needs runtime packages: %s. Re-run with --install-system-deps.\n",
-				style.ForStdout().Yellow("note:"), strings.Join(runtime, ", "))
-		}
+		return fmt.Errorf("prebuilt verification policy: %w", err)
 	}
 
 	tmp, err := os.CreateTemp("", "gpie-prebuilt-*.so")
 	if err != nil {
-		return false, fmt.Errorf("staging prebuilt .so: %w", err)
+		return fmt.Errorf("staging prebuilt .so: %w", err)
 	}
 	tmpPath := tmp.Name()
 	defer func() { _ = os.Remove(tmpPath) }()
 	if _, err := tmp.Write(prebuilt.SoBytes); err != nil {
 		_ = tmp.Close()
-		return false, fmt.Errorf("writing prebuilt .so: %w", err)
+		return fmt.Errorf("writing prebuilt .so: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
-		return false, fmt.Errorf("closing staged prebuilt .so: %w", err)
+		return fmt.Errorf("closing staged prebuilt .so: %w", err)
 	}
 
 	built := buildpkg.FromPrebuilt(tmpPath)
 	pkg := bundledPackage(name, plat)
 	outcome, err := install.Install(ctx, pkg, &built, plat, !args.SkipEnable)
 	if err != nil {
-		return false, fmt.Errorf("installing prebuilt extension: %w", err)
+		return fmt.Errorf("installing prebuilt extension: %w", err)
 	}
 
 	fmt.Fprintf(out, "%s %s (bundled, prebuilt, no compilation)\n",
 		style.ForStdout().Green("Install complete:"), outcome.InstalledSo)
 	writeIniOutcome(out, &outcome.Ini, name)
-	return true, nil
+	return nil
 }
 
 // emitBundled builds a bundled extension with the docker-php-ext-* helpers and
@@ -618,7 +651,18 @@ func provisionSystemDeps(ctx context.Context, targets []*Target, args *InstallAr
 	}
 
 	var perExt []docker.ResolvedSystemDeps
+	var prebuiltRuntime []string
 	for _, target := range targets {
+		// A prebuilt hit is not compiled, so it needs only the runtime libraries
+		// its .so links against -- recorded in the manifest by the builder --
+		// and none of the -dev packages or build tools the catalog lists. Taking
+		// the catalog entry here would install (and then purge) an entire build
+		// environment for a binary that is merely downloaded.
+		if target.prebuilt != nil {
+			prebuiltRuntime = append(prebuiltRuntime,
+				target.prebuilt.Manifest.RuntimePackagesFor(distro.FamilyToken())...)
+			continue
+		}
 		var resolved *docker.ResolvedSystemDeps
 		if !target.isBundled {
 			resolved = docker.ResolveSystemDeps(target.pkg.ExtensionName, target.pkg.LibRequires, distro)
@@ -634,17 +678,17 @@ func provisionSystemDeps(ctx context.Context, targets []*Target, args *InstallAr
 	// images ship one; Alpine images ship none, so the build dies with "Cannot
 	// find autoconf" unless $PHPIZE_DEPS is installed first. Bundled extensions
 	// do not need this -- `docker-php-ext-configure` installs and then PURGES
-	// the toolchain itself -- so only add it when something is built from
-	// source, and let it ride along in the same batched transaction.
+	// the toolchain itself -- and neither does a prebuilt hit, so only add it
+	// when something is actually compiled from source.
 	var phpize []string
 	for _, target := range targets {
-		if !target.isBundled {
+		if !target.isBundled && target.prebuilt == nil {
 			phpize = docker.PhpizeDeps()
 			break
 		}
 	}
 
-	if len(perExt) == 0 && len(phpize) == 0 {
+	if len(perExt) == 0 && len(phpize) == 0 && len(prebuiltRuntime) == 0 {
 		return nil
 	}
 
@@ -654,6 +698,12 @@ func provisionSystemDeps(ctx context.Context, targets []*Target, args *InstallAr
 	}
 	if len(phpize) > 0 {
 		allDeps = append(allDeps, docker.SystemDeps{BuildOnly: phpize})
+	}
+	// Runtime libraries for prebuilt hits are persistent: they must survive
+	// --cleanup-build-deps or the .so loses what it links against. Merging them
+	// here keeps everything in the one batched apt/apk transaction.
+	if len(prebuiltRuntime) > 0 {
+		allDeps = append(allDeps, docker.SystemDeps{Persistent: prebuiltRuntime})
 	}
 	merged := docker.MergeSystemDeps(allDeps)
 
@@ -763,6 +813,7 @@ func runTargetsParallel(
 					perBuildMakeJobs,
 					&outBuf,
 					true,
+					target.prebuilt,
 				)
 				resultsChan <- parallelResult{
 					idx:    idx,
@@ -799,105 +850,48 @@ func makeJobsPerBuild(availableCores, jobs int) int {
 	return val
 }
 
+// installPrebuilt writes an already-resolved prebuilt extension into place and
+// enables it. Resolution, the ABI check and runtime-package installation all
+// happen earlier (resolvePrebuilts + provisionSystemDeps), so this is only the
+// filesystem half.
+//
 //nolint:errcheck // The caller cannot usefully recover from presentation output failures.
-func tryPrebuilt(
+func installPrebuilt(
 	ctx context.Context,
 	resolved *resolver.ResolvedPackage,
 	plat *platform.TargetPlatform,
 	args *InstallArgs,
-	configureOptions []string,
+	prebuilt *oci.Prebuilt,
 	out io.Writer,
-) (bool, error) {
-	registryStr := args.prebuiltRegistry()
-	if registryStr == nil {
-		return false, nil
-	}
-	distro := docker.DetectDistro()
-	if distro == nil {
-		return false, nil
-	}
-
-	cell := oci.NewCell(
-		resolved.ExtensionName,
-		resolved.Version,
-		plat,
-		distro,
-		configureOptions,
-	)
-	registry, err := oci.ParseRegistry(*registryStr)
-	if err != nil {
-		return false, err
-	}
-
-	prebuilt, err := oci.ResolvePrebuilt(ctx, registry, &cell)
-	if err != nil {
-		if errors.Is(err, oci.ErrPrebuiltNotFound) {
-			fmt.Fprintf(out, "%s no prebuilt for %s — building from source\n",
-				style.ForStdout().Yellow("cache miss:"), cell.ID())
-			return false, nil
-		}
-		return false, err
-	}
-
-	if prebuilt.Manifest.PHPAPI != plat.PHP.APIVersion {
-		fmt.Fprintf(out, "%s prebuilt PHP API %s != target %s — building from source\n",
-			style.ForStdout().Yellow("cache miss:"), prebuilt.Manifest.PHPAPI, plat.PHP.APIVersion)
-		return false, nil
-	}
-
+) error {
 	if err := verifyPrebuiltPolicy(ctx, prebuilt, args.Verify.Policy()); err != nil {
-		return false, fmt.Errorf("prebuilt verification policy: %w", err)
-	}
-
-	fmt.Fprintf(out, "%s %s (%d bytes)\n",
-		style.ForStdout().Green("Using prebuilt:"), cell.ID(), len(prebuilt.SoBytes))
-
-	runtime := prebuilt.Manifest.RuntimePackagesFor(distro.FamilyToken())
-	if len(runtime) > 0 {
-		if args.InstallSystemDeps {
-			deps := docker.SystemDeps{
-				Persistent: runtime,
-				BuildOnly:  nil,
-			}
-			if err := docker.InstallSystemDeps(ctx, &deps, distro); err != nil {
-				return false, fmt.Errorf("installing prebuilt runtime packages: %w", err)
-			}
-			fmt.Fprintf(out, "%s runtime packages: %s\n",
-				style.ForStdout().Green("Installed"), strings.Join(runtime, ", "))
-		} else {
-			fmt.Fprintf(out, "%s prebuilt needs runtime packages: %s. Re-run with --install-system-deps.\n",
-				style.ForStdout().Yellow("note:"), strings.Join(runtime, ", "))
-		}
+		return fmt.Errorf("prebuilt verification policy: %w", err)
 	}
 
 	tmp, err := os.CreateTemp("", "gpie-prebuilt-*.so")
 	if err != nil {
-		return false, fmt.Errorf("staging prebuilt .so: %w", err)
+		return fmt.Errorf("staging prebuilt .so: %w", err)
 	}
 	tmpPath := tmp.Name()
 	defer func() { _ = os.Remove(tmpPath) }()
-
 	if _, err := tmp.Write(prebuilt.SoBytes); err != nil {
 		_ = tmp.Close()
-		return false, fmt.Errorf("writing prebuilt .so: %w", err)
+		return fmt.Errorf("writing prebuilt .so: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
-		return false, fmt.Errorf("closing staged prebuilt .so: %w", err)
+		return fmt.Errorf("closing staged prebuilt .so: %w", err)
 	}
 
 	built := buildpkg.FromPrebuilt(tmpPath)
-
 	outcome, err := install.Install(ctx, resolved, &built, plat, !args.SkipEnable)
 	if err != nil {
-		return false, fmt.Errorf("installing prebuilt extension: %w", err)
+		return fmt.Errorf("installing prebuilt extension: %w", err)
 	}
 
 	fmt.Fprintf(out, "%s %s (prebuilt, no compilation)\n",
 		style.ForStdout().Green("Install complete:"), outcome.InstalledSo)
-
 	writeIniOutcome(out, &outcome.Ini, resolved.ExtensionName)
-
-	return true, nil
+	return nil
 }
 
 func verifyPrebuiltPolicy(ctx context.Context, prebuilt *oci.Prebuilt, policy download.VerifyPolicy) error {
@@ -1123,15 +1117,17 @@ func buildAndInstallInner(
 	makeJobs int,
 	out io.Writer,
 	capture bool,
+	prebuilt *oci.Prebuilt,
 ) error {
 	configureOptions := buildConfigureOptions(resolved, args.ConfigureOptions, out)
 
-	if mode == ModeInstall {
-		ok, err := tryPrebuilt(ctx, resolved, plat, args, configureOptions, out)
-		if err != nil {
-			fmt.Fprintf(out, "%s prebuilt lookup failed, building from source: %v\n",
+	// Already resolved (and its runtime packages installed) by resolvePrebuilts
+	// before any system dependency was provisioned, so this only writes it out.
+	if mode == ModeInstall && prebuilt != nil {
+		if err := installPrebuilt(ctx, resolved, plat, args, prebuilt, out); err != nil {
+			fmt.Fprintf(out, "%s installing prebuilt failed, building from source: %v\n",
 				style.ForStdout().Yellow("note:"), err)
-		} else if ok {
+		} else {
 			return nil
 		}
 	}
