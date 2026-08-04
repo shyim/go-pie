@@ -5,7 +5,9 @@ package docker
 
 import (
 	"context"
+	"os"
 	"os/exec"
+	"strings"
 )
 
 // InOfficialPHPImage reports whether we appear to be inside an official PHP
@@ -102,6 +104,28 @@ func InstallSystemDeps(ctx context.Context, deps *SystemDeps, distro *Distro) er
 	// apt/apk transaction and take every other dependency down with it.
 	all = append(all, pm.AvailableBuildPackages(ctx, deps.BuildOnly)...)
 	return pm.Install(ctx, all)
+}
+
+// PhpizeDeps returns the compiler toolchain phpize needs, or nil when it is
+// already present.
+//
+// The official Debian php images ship autoconf/gcc/make preinstalled, but the
+// Alpine ones ship none of them: a source build there dies with "Cannot find
+// autoconf" unless they are installed first. The images publish the exact
+// package set as $PHPIZE_DEPS, which is what `docker-php-ext-*` uses, so honour
+// that rather than hardcoding a list that could drift from the base image.
+//
+// Returns nil when autoconf is already on PATH, so a Debian image (or an Alpine
+// one where the caller already installed them) adds nothing to the transaction.
+func PhpizeDeps() []string {
+	if lookPathOK("autoconf") {
+		return nil
+	}
+	raw, ok := os.LookupEnv("PHPIZE_DEPS")
+	if !ok {
+		return nil
+	}
+	return strings.Fields(raw)
 }
 
 func lookPathOK(name string) bool {
