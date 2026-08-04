@@ -467,6 +467,11 @@ def main():
         action="store_true",
         help="print the fewest shards that keep every shard under the matrix cap",
     )
+    ap.add_argument(
+        "--list-extensions",
+        action="store_true",
+        help="emit the extension names as a JSON array, one dispatched run each",
+    )
     args = ap.parse_args()
 
     cfg = load_targets(args.targets)
@@ -489,6 +494,16 @@ def main():
                 "version": c["version"],
             }
         print(json.dumps({"include": list(pairs.values())}))
+        return
+
+    if args.list_extensions:
+        # Ordered biggest-first so the longest runs are dispatched (and start
+        # queueing) before the short ones.
+        counts = {}
+        for c in include:
+            counts[c["ext_name"]] = counts.get(c["ext_name"], 0) + 1
+        names = sorted(counts, key=lambda n: (-counts[n], n))
+        print(json.dumps(names))
         return
 
     if args.min_shards:

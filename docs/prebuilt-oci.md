@@ -192,8 +192,10 @@ targets and `scripts/gen-prebuild-matrix.py` expands them against Packagist,
 so upstream releases land without editing a pinned version.
 
 ```sh
-python3 scripts/gen-prebuild-matrix.py --check      # per-extension cell counts
-python3 scripts/gen-prebuild-matrix.py --shard 0/8  # one shard, as CI runs it
+python3 scripts/gen-prebuild-matrix.py --check             # per-extension cell counts
+python3 scripts/gen-prebuild-matrix.py --list-extensions   # one dispatched run each
+python3 scripts/gen-prebuild-matrix.py --only redis --check # just one extension
+python3 scripts/gen-prebuild-matrix.py --only redis --shard 0/1 # as CI runs it
 ```
 
 ### Why the matrix is not a plain cartesian product
@@ -320,14 +322,35 @@ ship those preinstalled; Alpine images ship none, so `phpize` fails with
 "Cannot find autoconf". The workflow installs `$PHPIZE_DEPS` (published by the
 official images) before building on Alpine.
 
-### Sharding
+### One run per extension
 
-The full product exceeds GitHub's 256-job matrix cap, and `strategy.matrix` is
-evaluated before any job runs, so a single job cannot both compute and shard
-its matrix. `nightly-prebuild.yml` fans out over shard ids and calls the
-reusable `prebuild-shard.yml`, which expands its own slice. Shards stride
-rather than block-slice, so one slow extension's cells spread across all
-shards instead of stacking in one.
+The full matrix is ~2480 build jobs. GitHub imposes no cap on jobs per *run*,
+but a run that size makes the Actions UI unusable, so the work is split across
+runs rather than piled into one:
+
+```
+nightly-prebuild.yml   (scheduler)  dispatches one run per extension
+  └── prebuild-extension.yml        plan → build → index → verify, for ONE ext
+        └── prebuild-shard.yml      one shard of that extension's cells
+```
+
+**Reusable workflows cannot do this split.** A `uses:` job nests into the
+*calling* run, so its jobs still count toward that run — adding more of them
+changes nothing. Only `workflow_dispatch` starts a genuinely separate run. That
+turns one run of ~2628 jobs into ~38 runs of at most ~132.
+
+`prebuild-extension.yml` is also directly dispatchable to rebuild a single
+extension, which is the fast path when one extension fails a nightly.
+
+### Sharding within a run
+
+The 256-job matrix cap still applies per matrix, and `strategy.matrix` is
+evaluated before any job runs, so a single job cannot both compute and shard its
+matrix. `prebuild-extension.yml` fans out over shard ids and calls the reusable
+`prebuild-shard.yml`, which expands its own slice. Every individual extension
+fits in one shard today; the machinery stays so an extension that grows past 256
+cells keeps working. Shards stride rather than block-slice, so slow cells spread
+across shards instead of stacking in one.
 
 A build cell = spin up the matching official `php:<v>-<base>` image, run
 `gpie build <ext> --emit-oci`, which produces the layer + config blob; a publish

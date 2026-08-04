@@ -1,242 +1,100 @@
 name: Nightly prebuild
 
-# Builds a matrix of PHP extensions inside official php images, pushes each
-# compiled .so + gpie manifest to GHCR as a per-cell OCI artifact, then
-# aggregates the cells of each ext@version into a single OCI image index.
-# `gpie install --prefer-prebuilt` reads that index and downloads instead of
-# compiling.
+# Scheduler. Dispatches ONE `Prebuild extension` run per extension rather than
+# building everything inside a single run.
 #
-# The matrix is generated, not hand-written: `scripts/gen-prebuild-matrix.py`
-# expands `.github/prebuild-targets.yml` against Packagist. See
-# docs/prebuilt-oci.md for the axes and why SAPI is not one of them.
+# Reusable workflows do not help here: a `uses:` job nests into the CALLING run,
+# so all of its jobs still count toward that one run. The full matrix is ~2480
+# build jobs, and a run that size makes the Actions UI unusable. Separate
+# `workflow_dispatch` runs are the only way to actually split them -- ~38 runs of
+# at most ~132 jobs each.
+#
+# See docs/prebuilt-oci.md for the matrix axes and the cell identity.
 
 on:
   schedule:
     - cron: "0 3 * * *" # nightly at 03:00 UTC
   workflow_dispatch:
     inputs:
-      shards:
-        description: "Build shards (blank = the fewest that fit the matrix cap)"
-        required: false
-        default: ""
       only:
-        description: "Build only this extension (ext_name), empty for all"
+        description: "Dispatch just this extension (ext_name), empty for all"
         required: false
         default: ""
 
 permissions:
   contents: read
-  packages: write # push to GHCR
-  id-token: write # build attestations
-  attestations: write
 
-# The index job snapshots live registry tags, so two overlapping runs could
-# interleave cell pushes and publish a mixed index. Queue runs instead of
-# cancelling: a cancelled run would leave cells pushed but never indexed.
+# Two overlapping schedulers would dispatch each extension twice. Queue rather
+# than cancel: a cancelled scheduler leaves an arbitrary subset dispatched.
 concurrency:
   group: nightly-prebuild-${{ github.repository }}
   cancel-in-progress: false
 
-env:
-  REGISTRY: ghcr.io
-  NAMESPACE: ${{ github.repository_owner }}/gpie-ext
-
 jobs:
-  # ---- Expand the declarative targets into shard matrices -------------------
-  # GitHub caps a matrix at 256 jobs, and the full product is larger than that,
-  # so the matrix is split into shards that each run as their own matrix job.
-  plan:
+  dispatch:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
-    outputs:
-      shards: ${{ steps.plan.outputs.shards }}
-      index: ${{ steps.plan.outputs.index }}
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: write # dispatch the per-extension workflow
     steps:
       - uses: actions/checkout@v4
-      - name: Plan matrix
-        id: plan
+
+      - name: Dispatch one run per extension
         env:
-          SHARDS: ${{ inputs.shards }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ONLY: ${{ inputs.only }}
+          REF: ${{ github.ref_name }}
         run: |
-          # Both are workflow inputs (untrusted), so they are passed through the
-          # environment and charset-checked rather than interpolated.
+          # Explicit rather than relying on the runner's default shell flags: a
+          # failed validation below must abort before anything is dispatched.
+          set -euo pipefail
+
+          # `only` is a workflow input (untrusted), so it is charset-checked and
+          # passed through the environment rather than interpolated.
           if [ -n "$ONLY" ] && ! printf '%s' "$ONLY" | grep -Eq '^[a-z0-9_]{1,64}$'; then
             echo "refusing malformed 'only' input: $ONLY" >&2
             exit 1
           fi
-          if [ -n "$SHARDS" ] && { ! printf '%s' "$SHARDS" | grep -Eq '^[0-9]{1,3}$' || [ "$SHARDS" -lt 1 ]; }; then
-            echo "refusing malformed 'shards' input: $SHARDS" >&2
+
+          if [ -n "$ONLY" ]; then
+            # Validate it against the declared targets before dispatching, so a
+            # typo fails here instead of in a run that builds nothing.
+            python3 scripts/gen-prebuild-matrix.py --only "$ONLY" --min-shards >/dev/null
+            EXTS="[\"$ONLY\"]"
+          else
+            EXTS="$(python3 scripts/gen-prebuild-matrix.py --list-extensions)"
+          fi
+
+          printf '%s' "$EXTS" | python3 -c 'import json,sys; [print(e) for e in json.load(sys.stdin)]' > exts.txt
+          total="$(wc -l < exts.txt | tr -d " ")"
+          echo "Dispatching $total run(s) on $REF"
+
+          # Dispatched serially: the API allows 500 workflow runs per 10s, and
+          # ~38 sequential calls stay far under that while keeping the failure
+          # mode obvious (a failed dispatch is one named extension, not a batch).
+          failed=0
+          while read -r ext; do
+            [ -n "$ext" ] || continue
+            if gh workflow run prebuild-extension.yml \
+                 --ref "$REF" -f extension="$ext"; then
+              echo "  dispatched $ext"
+            else
+              echo "::warning::failed to dispatch $ext"
+              failed=$((failed + 1))
+            fi
+          done < exts.txt
+
+          if [ "$failed" -gt 0 ]; then
+            echo "$failed dispatch(es) failed" >&2
             exit 1
           fi
 
-          python3 scripts/gen-prebuild-matrix.py --check ${ONLY:+--only "$ONLY"}
-
-          # Default to the fewest shards that keep every shard under GitHub's
-          # 256-job matrix cap, computed from the matrix itself. Hardcoding a
-          # count here would silently break the run as the matrix grows.
-          MIN="$(python3 scripts/gen-prebuild-matrix.py --min-shards ${ONLY:+--only "$ONLY"})"
-          if [ -z "$SHARDS" ] || [ "$SHARDS" -lt "$MIN" ]; then
-            if [ -n "$SHARDS" ]; then
-              echo "::warning::raising shards from $SHARDS to $MIN to fit the matrix cap"
-            fi
-            SHARDS="$MIN"
-          fi
-          echo "Using $SHARDS shard(s)"
-
-          # A shard list the `build` job fans out over, and the deduplicated
-          # ext+version list the `index` job fans out over.
-          printf 'shards=' >> "$GITHUB_OUTPUT"
-          SHARDS="$SHARDS" python3 -c "import json,os;n=int(os.environ['SHARDS']);print(json.dumps([f'{i}/{n}' for i in range(n)]))" >> "$GITHUB_OUTPUT"
-          printf 'index=' >> "$GITHUB_OUTPUT"
-          python3 scripts/gen-prebuild-matrix.py --group-index ${ONLY:+--only "$ONLY"} >> "$GITHUB_OUTPUT"
-
-  # ---- Build every cell of one shard ---------------------------------------
-  build:
-    needs: plan
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: ${{ fromJSON(needs.plan.outputs.shards) }}
-    uses: ./.github/workflows/prebuild-shard.yml
-    with:
-      shard: ${{ matrix.shard }}
-      only: ${{ inputs.only }}
-    permissions:
-      contents: read
-      packages: write
-      id-token: write
-      attestations: write
-
-  # ---- Aggregate all cells of each ext@version into one image index ---------
-  index:
-    needs: [plan, build]
-    # `fail-fast: false` lets individual cells fail, but a matrix job with any
-    # failed cell is itself failed, which would skip indexing and waste every
-    # cell that did succeed. Run whenever the workflow was not cancelled; the
-    # step below still skips an ext@version with no cell tags at all.
-    if: ${{ always() && !cancelled() }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      max-parallel: 4
-      matrix: ${{ fromJSON(needs.plan.outputs.index) }}
-    steps:
-      - uses: oras-project/setup-oras@22ce207df3b08e061f537244349aac6ae1d214f6 # v1
-      - name: Log in to GHCR
-        env:
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          ACTOR: ${{ github.actor }}
-        run: echo "$GHCR_TOKEN" | oras login "$REGISTRY" -u "$ACTOR" --password-stdin
-
-      # Discover this version's per-cell tags and merge them into `ext:version`.
-      #
-      # The cell id must land on each INDEX DESCRIPTOR, not just on the child
-      # manifest: gpie's ResolvePrebuilt scans descriptors in order and, for any
-      # descriptor lacking the annotation, fetches that child manifest to read
-      # it. With hundreds of cells per version an unannotated index turns one
-      # lookup into hundreds of serial round-trips, on every miss.
-      #
-      # `oras manifest index create --annotation` does NOT do this -- it writes
-      # index-level annotations only, and oras exposes no per-descriptor
-      # annotation flag (verified against oras 1.3.0). So build the index with
-      # `-o -`, inject the annotations into `manifests[]`, and push the result
-      # with `oras manifest push`. Requires oras >= 1.3 for `manifest index`.
-      - name: Create/refresh version index
-        env:
-          EXT_NAME: ${{ matrix.ext_name }}
-          VER: ${{ matrix.version }}
-        run: |
-          REPO="$REGISTRY/$NAMESPACE/$EXT_NAME"
-          # All per-cell tags for this version look like `<ver>-<suffix>`. Anchor
-          # on the full version segment so 6.2.0 does not also match 6.2.0RC1.
-          mapfile -t TAGS < <(oras repo tags "$REPO" 2>/dev/null | grep -E "^${VER}-" || true)
-          if [ "${#TAGS[@]}" -eq 0 ]; then
-            echo "::warning::no cell tags for $REPO:$VER; nothing to index"
-            exit 0
-          fi
-
-          # Map each child manifest digest to its cell id, so the injector can
-          # annotate descriptors by digest rather than by position.
-          #
-          # The cell id is read out of the manifest BODY with a JSON parser, not
-          # `--format go-template`: that template renders the descriptor, which
-          # carries no annotations, so `index .annotations` aborts the whole
-          # command with "index of untyped nil" instead of returning empty.
-          : > cells.tsv
-          KEEP=()
-          for tag in "${TAGS[@]}"; do
-            body="$(oras manifest fetch "$REPO:$tag" 2>/dev/null || true)"
-            descriptor="$(oras manifest fetch "$REPO:$tag" --descriptor 2>/dev/null || true)"
-            cell="$(printf '%s' "$body" | python3 -c \
-              'import json,sys; d=json.load(sys.stdin); print((d.get("annotations") or {}).get("sh.gpie.cell",""))' \
-              2>/dev/null || true)"
-            digest="$(printf '%s' "$descriptor" | python3 -c \
-              'import json,sys; print(json.load(sys.stdin).get("digest",""))' 2>/dev/null || true)"
-            if ! printf '%s' "$cell" | grep -Eq '^[A-Za-z0-9._@/+-]{1,200}$'; then
-              echo "::warning::skipping $tag: missing or malformed sh.gpie.cell ($cell)"
-              continue
-            fi
-            if ! printf '%s' "$digest" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
-              echo "::warning::skipping $tag: could not resolve its manifest digest"
-              continue
-            fi
-            printf '%s\t%s\n' "$digest" "$cell" >> cells.tsv
-            KEEP+=("$tag")
-          done
-          if [ "${#KEEP[@]}" -eq 0 ]; then
-            echo "::warning::no annotatable cells for $REPO:$VER; nothing to index"
-            exit 0
-          fi
-          echo "Indexing ${#KEEP[@]} cell(s) into $REPO:$VER"
-
-          oras manifest index create "$REPO:$VER" -o index.json "${KEEP[@]}"
-          python3 - <<'PY'
-          import json
-          cells = {}
-          with open("cells.tsv") as fh:
-              for line in fh:
-                  digest, _, cell = line.rstrip("\n").partition("\t")
-                  if digest and cell:
-                      cells[digest] = cell
-          index = json.load(open("index.json"))
-          missing = 0
-          for descriptor in index.get("manifests", []):
-              cell = cells.get(descriptor.get("digest"))
-              if cell:
-                  descriptor.setdefault("annotations", {})["sh.gpie.cell"] = cell
-              else:
-                  missing += 1
-          if missing:
-              # Descriptors without the annotation still resolve, just slowly
-              # (the client falls back to fetching the child manifest).
-              print(f"::warning::{missing} descriptor(s) left unannotated")
-          json.dump(index, open("index.json", "w"), separators=(",", ":"))
-          print(f"annotated {len(index.get('manifests', [])) - missing} descriptor(s)")
-          PY
-          oras manifest push "$REPO:$VER" \
-            --media-type application/vnd.oci.image.index.v1+json index.json
-
-  # ---- Fail the run if too little of the matrix succeeded -------------------
-  # Individual cell failures are expected and tolerated, but a run where most
-  # cells failed means something systemic broke and should not pass silently.
-  verify:
-    needs: [build, index]
-    if: ${{ always() && !cancelled() }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - name: Check shard outcomes
-        env:
-          BUILD_RESULT: ${{ needs.build.result }}
-          INDEX_RESULT: ${{ needs.index.result }}
-        run: |
-          echo "build=$BUILD_RESULT index=$INDEX_RESULT"
-          if [ "$INDEX_RESULT" = "failure" ]; then
-            echo "indexing failed; published cells may not be reachable" >&2
-            exit 1
-          fi
-          if [ "$BUILD_RESULT" = "failure" ]; then
-            echo "::warning::at least one build shard reported failures; see the shard logs for the per-cell summary"
-          fi
+          {
+            echo "### Nightly prebuild dispatched"
+            echo ""
+            echo "$total per-extension run(s) on \`$REF\`."
+            echo ""
+            echo "Each builds its own cells and publishes its own index; watch"
+            echo "them in the [Prebuild extension](../../actions/workflows/prebuild-extension.yml) workflow."
+          } >> "$GITHUB_STEP_SUMMARY"
