@@ -8,3 +8,6 @@
 
 # Python bytecode from scripts/.
 __pycache__/
+
+# Scratch output from the nightly dispatch step.
+exts.txt
