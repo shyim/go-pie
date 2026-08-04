@@ -51,6 +51,16 @@ type InstallArgs struct {
 	Php                PhpTargetArgs
 }
 
+// DefaultOciRegistry is where `--prefer-prebuilt` looks when nothing else is
+// configured: the registry this project's nightly workflow publishes to.
+//
+// Having a default is the point of the flag -- requiring a registry to be named
+// as well made `--prefer-prebuilt` a silent no-op for anyone who did not already
+// know the URL. A cache miss is always harmless (it falls through to a source
+// build), so pointing at the official cache by default costs nothing when it is
+// wrong and saves a compile when it is right.
+const DefaultOciRegistry = "ghcr.io/shyim/gpie-ext"
+
 func (a *InstallArgs) prebuiltRegistry() *string {
 	if !a.PreferPrebuilt {
 		return nil
@@ -61,7 +71,14 @@ func (a *InstallArgs) prebuiltRegistry() *string {
 	if env := os.Getenv("GPIE_OCI_REGISTRY"); env != "" {
 		return &env
 	}
-	return nil
+	// Setting it to the empty string is an explicit opt-out, distinct from
+	// leaving it unset: `GPIE_OCI_REGISTRY= gpie install --prefer-prebuilt`
+	// disables the lookup rather than falling back to the default.
+	if _, set := os.LookupEnv("GPIE_OCI_REGISTRY"); set {
+		return nil
+	}
+	def := DefaultOciRegistry
+	return &def
 }
 
 func newInstallCommand(use, short string, mode Mode, phpTarget func(*cobra.Command) PhpTargetArgs) *cobra.Command {
@@ -132,7 +149,8 @@ func newInstallCommand(use, short string, mode Mode, phpTarget func(*cobra.Comma
 	flags.BoolVar(&ignorePlatformReqs, "ignore-platform-reqs", false, "Do not fail when the target PHP does not satisfy a package's requirement")
 	flags.IntVarP(&jobs, "jobs", "J", 1, "Build up to this many extensions concurrently")
 	flags.BoolVar(&preferPrebuilt, "prefer-prebuilt", false, "Prefer a prebuilt .so from the OCI cache when one exists")
-	flags.StringVar(&ociRegistry, "oci-registry", "", "OCI registry + namespace holding prebuilt extensions")
+	flags.StringVar(&ociRegistry, "oci-registry", "",
+		"OCI registry + namespace holding prebuilt extensions (default "+DefaultOciRegistry+", or $GPIE_OCI_REGISTRY)")
 	flags.StringVar(&emitOci, "emit-oci", "", "After a successful build, emit an OCI artifact into this directory")
 
 	return cmd
@@ -612,13 +630,30 @@ func provisionSystemDeps(ctx context.Context, targets []*Target, args *InstallAr
 		}
 	}
 
-	if len(perExt) == 0 {
+	// A source build runs phpize, which needs a compiler toolchain. Debian php
+	// images ship one; Alpine images ship none, so the build dies with "Cannot
+	// find autoconf" unless $PHPIZE_DEPS is installed first. Bundled extensions
+	// do not need this -- `docker-php-ext-configure` installs and then PURGES
+	// the toolchain itself -- so only add it when something is built from
+	// source, and let it ride along in the same batched transaction.
+	var phpize []string
+	for _, target := range targets {
+		if !target.isBundled {
+			phpize = docker.PhpizeDeps()
+			break
+		}
+	}
+
+	if len(perExt) == 0 && len(phpize) == 0 {
 		return nil
 	}
 
 	var allDeps []docker.SystemDeps
 	for _, r := range perExt {
 		allDeps = append(allDeps, r.Deps)
+	}
+	if len(phpize) > 0 {
+		allDeps = append(allDeps, docker.SystemDeps{BuildOnly: phpize})
 	}
 	merged := docker.MergeSystemDeps(allDeps)
 

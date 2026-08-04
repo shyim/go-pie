@@ -130,9 +130,12 @@ instead of compiling it. A cache miss falls back to the package's normal source
 workflow.
 
 ```sh
-export GPIE_OCI_REGISTRY=ghcr.io/shyim/gpie-ext
 gpie install phpredis/phpredis --prefer-prebuilt --install-system-deps
 ```
+
+`--prefer-prebuilt` queries `ghcr.io/shyim/gpie-ext` by default, so no extra
+configuration is needed. Point it elsewhere with `--oci-registry` or
+`GPIE_OCI_REGISTRY`, or set `GPIE_OCI_REGISTRY=` (empty) to disable the lookup.
 
 Prebuilt artifacts are keyed to the precise PHP, OS, architecture,
 thread-safety, debug, and configuration target. See

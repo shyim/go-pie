@@ -366,8 +366,9 @@ returning empty. The job parses the manifest body as JSON instead.
 
 - Client: compute the cell key; `oci` module that resolves the index, matches
   the cell, pulls config + layer, verifies, and installs. Wired as the
-  `PrebuiltOci` method, off by default behind `--prefer-prebuilt` +
-  `GPIE_OCI_REGISTRY`.
+  `PrebuiltOci` method, off by default behind `--prefer-prebuilt`, which queries
+  `ghcr.io/shyim/gpie-ext` unless `--oci-registry` or `GPIE_OCI_REGISTRY`
+  overrides it (an empty `GPIE_OCI_REGISTRY` disables the lookup).
 - Build/emit: `gpie build --emit-oci <dir>` writes the layer tarball + config
   blob for one cell (the unit CI publishes).
 - CI: a nightly workflow that builds ONE extension for ONE cell and pushes an
