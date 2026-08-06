@@ -25,7 +25,11 @@
 #                  the generator fails if not, since gpie's resolver rejects
 #                  anything else.
 #   ext_name       The extension (and GHCR repo) name.
-#   keep_versions  How many newest stable versions to build.
+#   keep_versions  How many newest stable versions to build. Defaults to 1 --
+#                  only the latest release. Cells for versions dropped out of
+#                  the matrix are NOT deleted from GHCR, so anyone pinned to an
+#                  older version keeps their cache hit; they just stop getting
+#                  new cells (e.g. for a newly added PHP minor).
 #   php / bases /  Override the defaults for this extension only.
 #   arches
 #   min_php        Floor that Packagist metadata does not express.
@@ -41,11 +45,9 @@ extensions:
   # ---- Widely used, cheap to build, no source-built C library --------------
   - package: phpredis/phpredis
     ext_name: redis
-    keep_versions: 2
 
   - package: xdebug/xdebug
     ext_name: xdebug
-    keep_versions: 2
 
   - package: mongodb/mongodb-extension
     ext_name: mongodb
