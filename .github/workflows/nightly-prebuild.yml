@@ -9,6 +9,11 @@ name: Nightly prebuild
 # `workflow_dispatch` runs are the only way to actually split them -- ~38 runs of
 # at most ~132 jobs each.
 #
+# Only extensions with at least one MISSING cell are dispatched. A steady-state
+# night where upstream published nothing new dispatches nothing at all; see
+# scripts/check-prebuilt-coverage.py for how "missing" is determined, and
+# `force` below to rebuild regardless.
+#
 # See docs/prebuilt-oci.md for the matrix axes and the cell identity.
 
 on:
@@ -20,6 +25,11 @@ on:
         description: "Dispatch just this extension (ext_name), empty for all"
         required: false
         default: ""
+      force:
+        description: "Dispatch even for extensions whose cells all exist"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -43,7 +53,12 @@ jobs:
       - name: Dispatch one run per extension
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Read by check-prebuilt-coverage.py for the GHCR token exchange, so
+          # the check also sees packages that are not public.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ONLY: ${{ inputs.only }}
+          FORCE: ${{ inputs.force }}
+          NAMESPACE: ${{ github.repository_owner }}/gpie-ext
           REF: ${{ github.ref_name }}
         run: |
           # Explicit rather than relying on the runner's default shell flags: a
@@ -61,13 +76,52 @@ jobs:
             # Validate it against the declared targets before dispatching, so a
             # typo fails here instead of in a run that builds nothing.
             python3 scripts/gen-prebuild-matrix.py --only "$ONLY" --min-shards >/dev/null
-            EXTS="[\"$ONLY\"]"
+          fi
+
+          # Dispatch only what is actually missing from GHCR. The scheduled run
+          # is the steady-state case: on a night where upstream published no new
+          # release and no new PHP patch landed, every cell already exists and
+          # this dispatches nothing.
+          #
+          # An unreadable cell counts as missing, so the failure mode is a
+          # redundant rebuild rather than a silently skipped one. The one case
+          # where that is too blunt is a registry-wide outage, which would
+          # report the whole matrix missing -- `--fail-on-registry-error` makes
+          # the step fail there instead of queueing thousands of jobs.
+          #
+          # `force` skips the check entirely and rebuilds everything in scope.
+          if [ "$FORCE" = "true" ]; then
+            echo "force=true: skipping the coverage check"
+            if [ -n "$ONLY" ]; then
+              EXTS="[\"$ONLY\"]"
+            else
+              EXTS="$(python3 scripts/gen-prebuild-matrix.py --list-extensions)"
+            fi
           else
-            EXTS="$(python3 scripts/gen-prebuild-matrix.py --list-extensions)"
+            # One pass, not two: `--report` writes the per-extension table to
+            # stderr (the step log, so a skipped night is auditable) while
+            # `--emit-json` puts the list on stdout. Running the checker twice
+            # would double the GHCR requests and risk being throttled into
+            # reporting everything as missing.
+            EXTS="$(python3 scripts/check-prebuilt-coverage.py \
+              --namespace "$NAMESPACE" ${ONLY:+--only "$ONLY"} \
+              --report --emit-json --fail-on-registry-error)"
           fi
 
           printf '%s' "$EXTS" | python3 -c 'import json,sys; [print(e) for e in json.load(sys.stdin)]' > exts.txt
           total="$(wc -l < exts.txt | tr -d " ")"
+
+          if [ "$total" -eq 0 ]; then
+            echo "Every declared cell already exists in GHCR; nothing to dispatch."
+            {
+              echo "### Nightly prebuild: nothing to do"
+              echo ""
+              echo "Every declared cell already exists in \`$NAMESPACE\`."
+              echo "Re-run with \`force\` to rebuild anyway."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
           echo "Dispatching $total run(s) on $REF"
 
           # Dispatched serially: the API allows 500 workflow runs per 10s, and
@@ -93,7 +147,13 @@ jobs:
           {
             echo "### Nightly prebuild dispatched"
             echo ""
-            echo "$total per-extension run(s) on \`$REF\`."
+            if [ "$FORCE" = "true" ]; then
+              echo "$total per-extension run(s) on \`$REF\` (forced, coverage check skipped)."
+            else
+              echo "$total extension(s) with missing cells, on \`$REF\`:"
+              echo ""
+              sed 's/^/- /' exts.txt
+            fi
             echo ""
             echo "Each builds its own cells and publishes its own index; watch"
             echo "them in the [Prebuild extension](../../actions/workflows/prebuild-extension.yml) workflow."
