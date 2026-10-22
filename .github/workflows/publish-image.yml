@@ -40,10 +40,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # QEMU is deliberately NOT installed: the Dockerfile pins its build stage
-      # to $BUILDPLATFORM and cross-compiles with GOARCH, so arm64 is produced
-      # natively on an amd64 runner. Emulating the Go toolchain would be far
-      # slower for an identical result.
+      # The Dockerfile cross-compiles on $BUILDPLATFORM, so building needs no
+      # emulation. The post-push smoke test does execute an ARM64 PHP container
+      # on this amd64 runner, so register QEMU for that runtime check.
+      - name: Set up ARM64 emulation for image verification
+        if: github.event_name != 'pull_request'
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4
+        with:
+          platforms: arm64
+
       - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
 
       # A pull request from a fork has no write access to GHCR, and we do not

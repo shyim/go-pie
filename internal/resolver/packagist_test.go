@@ -1,9 +1,55 @@
 package resolver
 
 import (
+	"os"
 	"reflect"
 	"testing"
 )
+
+func TestParsesMinifiedVersionMetadata(t *testing.T) {
+	body, err := os.ReadFile("testdata/packagist-minified.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	versions, err := ParseVersionsJSON(body, "xdebug/xdebug")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(versions) != 5 {
+		t.Fatalf("len = %d", len(versions))
+	}
+	// The stable releases inherit their type and extension metadata from an
+	// alpha. Replaced nested objects must not keep the alpha's old fields.
+	for _, i := range []int{1, 2} {
+		v := versions[i]
+		if v.PackageType != "php-ext-zend" || string(v.PhpExt) != `{"priority": 90}` {
+			t.Errorf("[%d] lost inherited metadata: %+v", i, v)
+		}
+		if !reflect.DeepEqual(v.Requires, map[string]string{"php": ">=8.0,<8.6"}) || len(v.LibRequires) != 0 {
+			t.Errorf("[%d] requires = %v, libs = %v", i, v.Requires, v.LibRequires)
+		}
+		if v.DistURL == nil || *v.DistURL != "https://example.com/stable.zip" || v.DistShasum != nil {
+			t.Errorf("[%d] dist metadata = %+v", i, v)
+		}
+		if v.SourceURL == nil || *v.SourceURL != "https://example.com/xdebug.git" {
+			t.Errorf("[%d] source = %v", i, v.SourceURL)
+		}
+	}
+	// Clearing a field must persist through subsequent deltas without changing
+	// any earlier release's snapshot.
+	for _, i := range []int{3, 4} {
+		v := versions[i]
+		if v.PackageType != "" || len(v.PhpExt) != 0 || len(v.Requires) != 0 || v.DistURL != nil || v.SourceURL != nil {
+			t.Errorf("[%d] retained unset metadata: %+v", i, v)
+		}
+	}
+	if versions[0].Requires["lib-zlib"] != "*" || versions[0].DistShasum == nil {
+		t.Error("expansion changed the first release")
+	}
+	if versions[1].Version != "3.5.3" || versions[2].Version != "3.5.2" {
+		t.Error("expansion changed release versions")
+	}
+}
 
 func TestParsesFullVersionMetadata(t *testing.T) {
 	body := []byte(`{

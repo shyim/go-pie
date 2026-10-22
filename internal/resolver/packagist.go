@@ -97,6 +97,7 @@ func (c *PackagistClient) fetch(ctx context.Context, url string) ([]byte, error)
 func ParseVersionsJSON(body []byte, pkg string) ([]PackageVersion, error) {
 	var doc struct {
 		Packages map[string]json.RawMessage `json:"packages"`
+		Minified string                     `json:"minified"`
 	}
 	if err := json.Unmarshal(body, &doc); err != nil {
 		return nil, fmt.Errorf("Packagist returned no versions for `%s`", pkg) //nolint:staticcheck // Packagist is a proper noun.
@@ -111,16 +112,30 @@ func ParseVersionsJSON(body []byte, pkg string) ([]PackageVersion, error) {
 	}
 
 	out := make([]PackageVersion, 0, len(arr))
+	previous := make(map[string]json.RawMessage)
 	for _, el := range arr {
-		out = append(out, parsePackageVersion(el))
+		var obj map[string]json.RawMessage
+		if err := json.Unmarshal(el, &obj); err != nil {
+			return nil, fmt.Errorf("parsing Packagist version for %s: %w", pkg, err)
+		}
+		if doc.Minified == "composer/2.0" {
+			// Each entry is a top-level delta from the preceding release.
+			// Expand all entries, including prereleases, before resolution.
+			for key, value := range obj {
+				if s, ok := jsonString(value); ok && s == "__unset" {
+					delete(previous, key)
+				} else {
+					previous[key] = value
+				}
+			}
+			obj = previous
+		}
+		out = append(out, parsePackageVersion(obj))
 	}
 	return out, nil
 }
 
-func parsePackageVersion(raw json.RawMessage) PackageVersion {
-	var obj map[string]json.RawMessage
-	_ = json.Unmarshal(raw, &obj)
-
+func parsePackageVersion(obj map[string]json.RawMessage) PackageVersion {
 	strAt := func(k string) string {
 		if s, ok := jsonString(obj[k]); ok {
 			return s

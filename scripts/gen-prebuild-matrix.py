@@ -245,16 +245,23 @@ def packagist_versions(package, keep):
     if not releases:
         fail(f"{package}: not found on Packagist")
 
+    # composer/2.0 entries are deltas from the preceding release, including
+    # prereleases. Expand before filtering: Xdebug's newest alpha carries the
+    # type and php-ext fields inherited by its stable releases.
+    if data.get("minified") == "composer/2.0":
+        releases = expand_versions(releases)
+
     seen = {}
-    ext_type = None
+    has_ext_type = False
     for rel in releases:
         if not isinstance(rel, dict):
             continue
         version = rel.get("version", "")
         if not is_stable(version):
             continue
-        if rel.get("type") in ("php-ext", "php-ext-zend"):
-            ext_type = rel.get("type")
+        if rel.get("type") not in ("php-ext", "php-ext-zend"):
+            continue
+        has_ext_type = True
         # Older releases predate the php-ext spec and carry no `php-ext` block,
         # so gpie cannot learn the extension name and falls back to deriving it
         # from the package name -- phpredis/phpredis 6.2.0 builds redis.so but is
@@ -266,7 +273,7 @@ def packagist_versions(package, keep):
         # p2 lists newest first; keep the first (richest) entry per version.
         seen.setdefault(normalized, php_require(rel))
 
-    if ext_type is None:
+    if not has_ext_type:
         fail(
             f"{package}: no stable release declares composer type php-ext or "
             "php-ext-zend; gpie's resolver would reject it"
@@ -276,6 +283,20 @@ def packagist_versions(package, keep):
 
     ordered = sorted(seen.items(), key=lambda kv: version_key(kv[0]), reverse=True)
     return ordered[:keep]
+
+
+def expand_versions(releases):
+    """Expand Composer's top-level deltas; nested objects replace, not merge."""
+    previous = {}
+    expanded = []
+    for release in releases:
+        for key, value in release.items():
+            if value == "__unset":
+                previous.pop(key, None)
+            else:
+                previous[key] = value
+        expanded.append(previous.copy())
+    return expanded
 
 
 def build_matrix(cfg):

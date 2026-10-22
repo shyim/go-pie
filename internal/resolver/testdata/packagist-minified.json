@@ -1,0 +1,30 @@
+{
+  "minified": "composer/2.0",
+  "packages": {
+    "xdebug/xdebug": [
+      {
+        "version": "3.6.0alpha1",
+        "type": "php-ext-zend",
+        "php-ext": {"priority": 90},
+        "require": {"php": ">=8.2,<8.7", "lib-zlib": "*"},
+        "dist": {"url": "https://example.com/alpha.zip", "type": "zip", "shasum": "abc"},
+        "source": {"url": "https://example.com/xdebug.git"}
+      },
+      {
+        "version": "3.5.3",
+        "require": {"php": ">=8.0,<8.6"},
+        "dist": {"url": "https://example.com/stable.zip", "type": "zip"}
+      },
+      {"version": "3.5.2"},
+      {
+        "version": "3.5.1",
+        "type": "__unset",
+        "php-ext": "__unset",
+        "require": "__unset",
+        "dist": "__unset",
+        "source": "__unset"
+      },
+      {"version": "3.5.0"}
+    ]
+  }
+}
