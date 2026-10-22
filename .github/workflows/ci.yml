@@ -24,6 +24,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.26'
+          check-latest: true
           cache: true
       - name: Format Check
         run: |
@@ -48,6 +49,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.26'
+          check-latest: true
           cache: true
       # Third-party action pinned to a commit SHA: tags are mutable, so a
       # retagged release could otherwise run untrusted code in CI.
@@ -64,6 +66,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.26'
+          check-latest: true
           cache: true
       # Pinned rather than @latest so a new release cannot change CI behaviour
       # without a workflow review.
@@ -78,6 +81,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.26'
+          check-latest: true
           cache: true
       - name: Build for Windows
         run: GOOS=windows GOARCH=amd64 go build -o gpie.exe .
